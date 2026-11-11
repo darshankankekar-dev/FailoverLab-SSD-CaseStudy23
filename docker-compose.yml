@@ -1,0 +1,4 @@
+# Mirror of compose.yaml for legacy docker-compose CLI compatibility
+# Refer to compose.yaml for canonical definition.
+include:
+  - compose.yaml

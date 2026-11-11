@@ -1,0 +1,26 @@
+FROM python:3.11.11-slim
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install all runtime and testing dependencies in the isolated container environment
+COPY controller/requirements.txt /tmp/controller-reqs.txt
+COPY region_service/requirements.txt /tmp/region-reqs.txt
+COPY replication_worker/requirements.txt /tmp/replicator-reqs.txt
+COPY gateway/requirements.txt /tmp/gateway-reqs.txt
+
+RUN pip install --no-cache-dir \
+    -r /tmp/controller-reqs.txt \
+    -r /tmp/region-reqs.txt \
+    -r /tmp/replicator-reqs.txt \
+    -r /tmp/gateway-reqs.txt
+
+COPY . .
+
+ENV PYTHONPATH=/workspace
+
+CMD ["sh", "-c", "python -m pytest --import-mode=importlib controller/tests/ && python -m pytest --import-mode=importlib region_service/tests/ && python -m pytest --import-mode=importlib replication_worker/tests/ && python -m pytest --import-mode=importlib gateway/tests/"]
+

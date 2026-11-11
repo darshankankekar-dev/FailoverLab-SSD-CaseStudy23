@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.vscode
+.idea
+__pycache__
+*.pyc
+.pytest_cache
+.env
+*.db
+*.sqlite
+
