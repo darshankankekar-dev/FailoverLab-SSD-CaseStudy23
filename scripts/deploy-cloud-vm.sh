@@ -53,9 +53,9 @@ fi
 echo "=== [2/6] Configuring Host UFW Firewall ==="
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow 22/tcp comment 'SSH Access'
-ufw allow 80/tcp comment 'HTTP (Caddy Let\'s Encrypt Challenge)'
-ufw allow 443/tcp comment 'HTTPS (Caddy Secure Web)'
+ufw allow 22/tcp comment "SSH Access"
+ufw allow 80/tcp comment "HTTP Web Ingress"
+ufw allow 443/tcp comment "HTTPS Web Ingress"
 # Ensure database and microservice ports are blocked from the internet
 ufw deny 5432/tcp || true
 ufw deny 5433/tcp || true
