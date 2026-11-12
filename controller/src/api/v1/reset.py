@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -13,11 +14,14 @@ from ...models import (
 )
 from ...services import log_audit_event, get_full_state
 from ...services.metrics_tracker import metrics_tracker
+from ...services.clients import regional_client, gateway_client
+from ...security import verify_admin_access
 
+logger = logging.getLogger("controller.api.v1.reset")
 router = APIRouter(tags=["Reset"])
 
 
-@router.post("/reset", response_model=StateResponse)
+@router.post("/reset", response_model=StateResponse, dependencies=[Depends(verify_admin_access)])
 async def reset_simulation(
     payload: ResetRequest,
     session: AsyncSession = Depends(get_db_session),
@@ -98,6 +102,18 @@ async def reset_simulation(
         policy.majority_required = 2
         policy.acceptable_replication_lag_sec = 5.0
         policy.auto_failover_enabled = True
+
+    # 8. Synchronize regional services and gateway
+    try:
+        await regional_client.promote("region-a", epoch=101)
+        await regional_client.demote("region-b", epoch=101)
+        await gateway_client.update_route(
+            target_region="region-a",
+            ttl=2,
+            propagation_percent=100,
+        )
+    except Exception as e:
+        logger.warning(f"Could not synchronize regional services on reset: {e}")
 
     await log_audit_event(
         session,

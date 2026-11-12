@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # Execution flags
     simulation_mode: bool = True  # If downstream services offline, synthesize verified responses
     internal_api_secret: str = "internal-secret-token"
+    require_admin_auth: bool = False
+    admin_api_secret: Optional[str] = None
 
     @field_validator("database_url")
     @classmethod

@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...database import get_db_session
 from ...schemas import FailbackRequest, TransitionResponse, TransitionStatus
 from ...services import execute_failback_workflow
+from ...security import verify_admin_access
 
 router = APIRouter(tags=["Failback"])
 
@@ -11,6 +12,7 @@ router = APIRouter(tags=["Failback"])
 @router.post(
     "/failback",
     response_model=TransitionResponse,
+    dependencies=[Depends(verify_admin_access)],
     responses={
         200: {"description": "Guarded failback successfully executed"},
         409: {"description": "Failback transition blocked by a safety gate check"},

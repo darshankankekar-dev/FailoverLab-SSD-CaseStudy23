@@ -16,7 +16,9 @@ class RegionalClient:
         self.timeout = httpx.Timeout(0.2, connect=0.05) if settings.simulation_mode else httpx.Timeout(3.0)
 
     def _get_headers(self, epoch: Optional[int] = None) -> Dict[str, str]:
-        headers: Dict[str, str] = {}
+        headers: Dict[str, str] = {
+            "X-Internal-Secret": settings.internal_api_secret,
+        }
         corr_id = correlation_id_ctx.get()
         if corr_id:
             headers["X-Correlation-ID"] = corr_id

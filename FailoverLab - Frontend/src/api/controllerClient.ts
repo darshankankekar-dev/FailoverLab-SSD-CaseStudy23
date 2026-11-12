@@ -154,6 +154,14 @@ export class ControllerClient {
     return this.controllerUrl || '(same-origin)';
   }
 
+  public getAdminHeaders(): Record<string, string> {
+    const isBrowser = typeof window !== 'undefined';
+    const secret = isBrowser
+      ? (window as any).__ADMIN_SECRET__ || localStorage.getItem('FAILOVERLAB_ADMIN_SECRET') || ''
+      : '';
+    return secret ? { 'X-Admin-Secret': secret, 'X-Internal-Secret': secret } : {};
+  }
+
   private async fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 3000): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -219,7 +227,7 @@ export class ControllerClient {
     };
     const res = await this.fetchWithTimeout(`${base}/api/v1/failover`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...this.getAdminHeaders() },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -239,7 +247,7 @@ export class ControllerClient {
     };
     const res = await this.fetchWithTimeout(`${base}/api/v1/failback`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...this.getAdminHeaders() },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -253,7 +261,7 @@ export class ControllerClient {
     const base = this.controllerUrl;
     const res = await this.fetchWithTimeout(`${base}/api/v1/reset`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...this.getAdminHeaders() },
       body: JSON.stringify({ preserve_policy: preservePolicy }),
     });
     if (!res.ok) {
@@ -266,7 +274,7 @@ export class ControllerClient {
     const base = this.controllerUrl;
     const res = await this.fetchWithTimeout(`${base}/api/v1/policy`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...this.getAdminHeaders() },
       body: JSON.stringify(partialPolicy),
     });
     if (!res.ok) {
@@ -277,28 +285,40 @@ export class ControllerClient {
 
   public async injectPrimaryOutage(): Promise<ControllerStateDto> {
     const base = this.controllerUrl;
-    const res = await this.fetchWithTimeout(`${base}/internal/chaos/primary-outage`, { method: 'POST' });
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/primary-outage`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
     if (!res.ok) throw new Error(`Inject primary outage failed (HTTP ${res.status})`);
     return await res.json();
   }
 
   public async recoverPrimary(): Promise<ControllerStateDto> {
     const base = this.controllerUrl;
-    const res = await this.fetchWithTimeout(`${base}/internal/chaos/recover-primary`, { method: 'POST' });
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/recover-primary`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
     if (!res.ok) throw new Error(`Recover primary failed (HTTP ${res.status})`);
     return await res.json();
   }
 
   public async injectPartition(): Promise<ControllerStateDto> {
     const base = this.controllerUrl;
-    const res = await this.fetchWithTimeout(`${base}/internal/chaos/partition`, { method: 'POST' });
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/partition`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
     if (!res.ok) throw new Error(`Inject partition failed (HTTP ${res.status})`);
     return await res.json();
   }
 
   public async injectReplicationLag(lagSeconds: number): Promise<ControllerStateDto> {
     const base = this.controllerUrl;
-    const res = await this.fetchWithTimeout(`${base}/internal/chaos/replication-lag?lag_seconds=${lagSeconds}`, { method: 'POST' });
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/replication-lag?lag_seconds=${lagSeconds}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
     if (!res.ok) throw new Error(`Inject replication lag failed (HTTP ${res.status})`);
     return await res.json();
   }

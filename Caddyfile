@@ -1,0 +1,44 @@
+# =========================================================================
+# FailoverLab: Host Caddyfile Configuration
+# Path on Ubuntu Host: /etc/caddy/Caddyfile
+# Upstream Target: 127.0.0.1:3000 (Docker frontend Nginx container)
+# =========================================================================
+
+failoverlab.yourdomain.com {
+    # Reverse proxy all HTTP & WebSocket traffic to Frontend container on loopback
+    reverse_proxy 127.0.0.1:3000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        
+        # Buffer and transport timeouts
+        transport http {
+            response_header_timeout 60s
+        }
+    }
+
+    # HTTP Compression
+    encode zstd gzip
+
+    # Production Security Headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # Access and Error Logging
+    log {
+        output file /var/log/caddy/failoverlab_access.log {
+            roll_size 20mb
+            roll_keep 5
+            roll_keep_for 720h
+        }
+        format console
+    }
+}
+

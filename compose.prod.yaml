@@ -1,0 +1,306 @@
+# =========================================================================
+# FailoverLab: Multi-Region Active-Passive Failover Controller
+# Production Docker Compose Configuration (compose.prod.yaml)
+# =========================================================================
+# Architecture Note (Academic Simulation):
+# Mumbai (Region A) and Singapore (Region B) run as logical regional microservices
+# inside isolated Docker containers on a single cloud VM.
+#
+# Production Security Hardening:
+# 1. Host Port Isolation: Only the Frontend reverse proxy is exposed to the host,
+#    strictly bound to 127.0.0.1:${FRONTEND_PORT:-3000}:80 (host loopback only).
+# 2. Complete Database & Backend Concealment: Controller, Gateway, Region A, Region B,
+#    Replicator, and all PostgreSQL databases (ports 5432-5434) do NOT publish host ports.
+# 3. Inter-Service Communication: Microservices communicate exclusively over the
+#    isolated bridge network 'failover_network'.
+# 4. Enforced Secret Requirements: Mandatory strong secrets for POSTGRES_PASSWORD and
+#    INTERNAL_API_SECRET (no silent weak defaults).
+# =========================================================================
+
+networks:
+  failover_network:
+    driver: bridge
+    name: failover_network
+
+volumes:
+  controller_db_data:
+    name: failoverlab_controller_db_data
+  region_a_db_data:
+    name: failoverlab_region_a_db_data
+  region_b_db_data:
+    name: failoverlab_region_b_db_data
+
+services:
+  # =========================================================================
+  # 1. Controller Metadata & Audit Database (Isolated)
+  # =========================================================================
+  controller-db:
+    image: postgres:16-alpine
+    container_name: failoverlab-controller-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}"
+      POSTGRES_DB: ${CONTROLLER_DB_NAME:-failover_controller}
+    volumes:
+      - controller_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${CONTROLLER_DB_NAME:-failover_controller}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 2. Region A (Mumbai) Application Database (Isolated)
+  # =========================================================================
+  region-a-db:
+    image: postgres:16-alpine
+    container_name: failoverlab-region-a-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}"
+      POSTGRES_DB: ${REGION_A_DB_NAME:-failover_region_a}
+    volumes:
+      - region_a_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${REGION_A_DB_NAME:-failover_region_a}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 3. Region B (Singapore) Application Database (Isolated)
+  # =========================================================================
+  region-b-db:
+    image: postgres:16-alpine
+    container_name: failoverlab-region-b-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}"
+      POSTGRES_DB: ${REGION_B_DB_NAME:-failover_region_b}
+    volumes:
+      - region_b_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${REGION_B_DB_NAME:-failover_region_b}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 4. Regional Application Service: Region A (Mumbai, Active Primary)
+  # =========================================================================
+  region-a:
+    build:
+      context: ./region_service
+      dockerfile: Dockerfile
+    container_name: failoverlab-region-a
+    restart: unless-stopped
+    environment:
+      PORT: 8001
+      REGION_ID: region-a
+      REGION_NAME: Mumbai
+      CLOUD_ZONE: ap-south-1
+      ROLE: ACTIVE
+      INITIAL_ROLE: ACTIVE
+      INITIAL_EPOCH: 1
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@region-a-db:5432/${REGION_A_DB_NAME:-failover_region_a}"
+      CONTROLLER_URL: http://controller:8000
+      INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      region-a-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 5. Regional Application Service: Region B (Singapore, Standby Replica)
+  # =========================================================================
+  region-b:
+    build:
+      context: ./region_service
+      dockerfile: Dockerfile
+    container_name: failoverlab-region-b
+    restart: unless-stopped
+    environment:
+      PORT: 8002
+      REGION_ID: region-b
+      REGION_NAME: Singapore
+      CLOUD_ZONE: ap-southeast-1
+      ROLE: STANDBY
+      INITIAL_ROLE: STANDBY
+      INITIAL_EPOCH: 1
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@region-b-db:5432/${REGION_B_DB_NAME:-failover_region_b}"
+      CONTROLLER_URL: http://controller:8000
+      INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      region-b-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 6. Central Control Plane Service (Failover Controller)
+  # =========================================================================
+  controller:
+    build:
+      context: ./controller
+      dockerfile: Dockerfile
+    container_name: failoverlab-controller
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@controller-db:5432/${CONTROLLER_DB_NAME:-failover_controller}"
+      REGION_A_URL: http://region-a:8001
+      REGION_B_URL: http://region-b:8002
+      GATEWAY_URL: http://gateway:8080
+      REPLICATION_WORKER_URL: http://replicator:8003
+      INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      REQUIRE_ADMIN_AUTH: ${REQUIRE_ADMIN_AUTH:-true}
+      ADMIN_API_SECRET: "${ADMIN_API_SECRET:-${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}}"
+      SIMULATION_MODE: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      controller-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 7. Dynamic Ingress Gateway (Routing Proxy)
+  # =========================================================================
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: failoverlab-gateway
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      REGION_A_URL: http://region-a:8001
+      REGION_B_URL: http://region-b:8002
+      CONTROLLER_URL: http://controller:8000
+      DEFAULT_TARGET: region-a
+      INTERNAL_TOKEN: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      region-a:
+        condition: service_healthy
+      region-b:
+        condition: service_healthy
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 8. Asynchronous Replication Worker (Outbox Poller & Applier)
+  # =========================================================================
+  replicator:
+    build:
+      context: ./replication_worker
+      dockerfile: Dockerfile
+    container_name: failoverlab-replicator
+    restart: unless-stopped
+    environment:
+      PORT: 8003
+      CONTROLLER_URL: http://controller:8000
+      REGION_A_URL: http://region-a:8001
+      REGION_B_URL: http://region-b:8002
+      INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      POLL_INTERVAL_SECONDS: 1.0
+      BATCH_SIZE: 50
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      controller:
+        condition: service_healthy
+      region-a:
+        condition: service_healthy
+      region-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 9. Frontend User Interface (React + Vite + Nginx Reverse Proxy)
+  # =========================================================================
+  frontend:
+    build:
+      context: './FailoverLab - Frontend'
+      dockerfile: Dockerfile
+    container_name: failoverlab-frontend
+    restart: unless-stopped
+    ports:
+      # STRICT SECURITY BINDING:
+      # Bound solely to local loopback (127.0.0.1) on the VM host.
+      # Public users cannot access port 3000 directly.
+      # Host Caddy reverse proxy terminates TLS and proxies to 127.0.0.1:${FRONTEND_PORT:-3000}.
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+      controller:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:80/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 10. Containerized Test Runner (Profile: test)
+  # =========================================================================
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: failoverlab-test-runner
+    profiles:
+      - test
+    networks:
+      - failover_network

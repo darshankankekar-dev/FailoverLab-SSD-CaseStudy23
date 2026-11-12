@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db_session
+from ..security import verify_internal_access
 from ..schemas import (
     RegionalStatusResponse,
     EpochStatusResponse,
@@ -24,8 +25,8 @@ async def regional_status(session: AsyncSession = Depends(get_db_session)) -> Re
     return await get_regional_status(session)
 
 
-@admin_router.post("/admin/fence", response_model=EpochStatusResponse)
-@admin_router.post("/internal/admin/fence", response_model=EpochStatusResponse)
+@admin_router.post("/admin/fence", response_model=EpochStatusResponse, dependencies=[Depends(verify_internal_access)])
+@admin_router.post("/internal/admin/fence", response_model=EpochStatusResponse, dependencies=[Depends(verify_internal_access)])
 async def admin_fence(
     payload: FenceRequest,
     session: AsyncSession = Depends(get_db_session),
@@ -38,8 +39,8 @@ async def admin_fence(
     )
 
 
-@admin_router.post("/admin/promote", response_model=EpochStatusResponse)
-@admin_router.post("/internal/admin/promote", response_model=EpochStatusResponse)
+@admin_router.post("/admin/promote", response_model=EpochStatusResponse, dependencies=[Depends(verify_internal_access)])
+@admin_router.post("/internal/admin/promote", response_model=EpochStatusResponse, dependencies=[Depends(verify_internal_access)])
 async def admin_promote(
     payload: PromoteRequest,
     session: AsyncSession = Depends(get_db_session),
@@ -52,8 +53,8 @@ async def admin_promote(
     )
 
 
-@admin_router.post("/admin/demote", response_model=EpochStatusResponse)
-@admin_router.post("/internal/admin/demote", response_model=EpochStatusResponse)
+@admin_router.post("/admin/demote", response_model=EpochStatusResponse, dependencies=[Depends(verify_internal_access)])
+@admin_router.post("/internal/admin/demote", response_model=EpochStatusResponse, dependencies=[Depends(verify_internal_access)])
 async def admin_demote(
     payload: DemoteRequest,
     session: AsyncSession = Depends(get_db_session),

@@ -5,6 +5,7 @@ from ...database import get_db_session
 from ...schemas import PolicyResponse, PolicyUpdateRequest
 from ...models import PolicyEntity, ControllerStateEntity
 from ...services import log_audit_event
+from ...security import verify_admin_access
 
 router = APIRouter(tags=["Policy"])
 
@@ -29,7 +30,7 @@ async def get_policy(session: AsyncSession = Depends(get_db_session)) -> PolicyR
     )
 
 
-@router.put("/policy", response_model=PolicyResponse)
+@router.put("/policy", response_model=PolicyResponse, dependencies=[Depends(verify_admin_access)])
 async def update_policy(
     payload: PolicyUpdateRequest,
     session: AsyncSession = Depends(get_db_session),
