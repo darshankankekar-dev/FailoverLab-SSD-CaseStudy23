@@ -3,18 +3,20 @@
 # Production Docker Compose Configuration (compose.prod.yaml)
 # =========================================================================
 # Architecture Note (Academic Simulation):
-# Mumbai (Region A) and Singapore (Region B) run as logical regional microservices
-# inside isolated Docker containers on a single cloud VM.
+# 5 logical regions (Mumbai, Singapore, Frankfurt, Virginia, São Paulo) run as
+# regional microservices inside isolated Docker containers on a single cloud VM.
 #
 # Production Security Hardening:
 # 1. Host Port Isolation: Only the Frontend reverse proxy is exposed to the host,
 #    strictly bound to 127.0.0.1:${FRONTEND_PORT:-3000}:80 (host loopback only).
-# 2. Complete Database & Backend Concealment: Controller, Gateway, Region A, Region B,
-#    Replicator, and all PostgreSQL databases (ports 5432-5434) do NOT publish host ports.
+# 2. Complete Database & Backend Concealment: Controller, Gateway, 5 Region Services,
+#    Replicator, and all 6 PostgreSQL databases do NOT publish host ports.
 # 3. Inter-Service Communication: Microservices communicate exclusively over the
 #    isolated bridge network 'failover_network'.
 # 4. Enforced Secret Requirements: Mandatory strong secrets for POSTGRES_PASSWORD and
 #    INTERNAL_API_SECRET (no silent weak defaults).
+# 5. Resource Sizing & Limits: Strict CPU (0.50) and memory (DB: 512M, App: 384M, Frontend: 256M)
+#    limits and reservations enforced on all 15 production containers.
 # =========================================================================
 
 networks:
@@ -29,6 +31,12 @@ volumes:
     name: failoverlab_region_a_db_data
   region_b_db_data:
     name: failoverlab_region_b_db_data
+  region_c_db_data:
+    name: failoverlab_region_c_db_data
+  region_d_db_data:
+    name: failoverlab_region_d_db_data
+  region_e_db_data:
+    name: failoverlab_region_e_db_data
 
 services:
   # =========================================================================
@@ -50,6 +58,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
@@ -72,6 +88,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
@@ -94,6 +118,104 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 3c. Region C (Frankfurt) Application Database (Isolated)
+  # =========================================================================
+  region-c-db:
+    image: postgres:16-alpine
+    container_name: failoverlab-region-c-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}"
+      POSTGRES_DB: ${REGION_C_DB_NAME:-failover_region_c}
+    volumes:
+      - region_c_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${REGION_C_DB_NAME:-failover_region_c}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 3d. Region D (Virginia) Application Database (Isolated)
+  # =========================================================================
+  region-d-db:
+    image: postgres:16-alpine
+    container_name: failoverlab-region-d-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}"
+      POSTGRES_DB: ${REGION_D_DB_NAME:-failover_region_d}
+    volumes:
+      - region_d_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${REGION_D_DB_NAME:-failover_region_d}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 3e. Region E (São Paulo) Application Database (Isolated)
+  # =========================================================================
+  region-e-db:
+    image: postgres:16-alpine
+    container_name: failoverlab-region-e-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}"
+      POSTGRES_DB: ${REGION_E_DB_NAME:-failover_region_e}
+    volumes:
+      - region_e_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${REGION_E_DB_NAME:-failover_region_e}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
@@ -127,6 +249,14 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
@@ -160,11 +290,139 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
   # =========================================================================
-  # 6. Central Control Plane Service (Failover Controller)
+  # 5c. Regional Application Service: Region C (Frankfurt, Standby)
+  # =========================================================================
+  region-c:
+    build:
+      context: ./region_service
+      dockerfile: Dockerfile
+    container_name: failoverlab-region-c
+    restart: unless-stopped
+    environment:
+      PORT: 8004
+      REGION_ID: region-c
+      REGION_NAME: Frankfurt
+      CLOUD_ZONE: eu-central-1
+      ROLE: STANDBY
+      INITIAL_ROLE: STANDBY
+      INITIAL_EPOCH: 1
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@region-c-db:5432/${REGION_C_DB_NAME:-failover_region_c}"
+      CONTROLLER_URL: http://controller:8000
+      INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      region-c-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 5d. Regional Application Service: Region D (Virginia, Standby)
+  # =========================================================================
+  region-d:
+    build:
+      context: ./region_service
+      dockerfile: Dockerfile
+    container_name: failoverlab-region-d
+    restart: unless-stopped
+    environment:
+      PORT: 8005
+      REGION_ID: region-d
+      REGION_NAME: Virginia
+      CLOUD_ZONE: us-east-1
+      ROLE: STANDBY
+      INITIAL_ROLE: STANDBY
+      INITIAL_EPOCH: 1
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@region-d-db:5432/${REGION_D_DB_NAME:-failover_region_d}"
+      CONTROLLER_URL: http://controller:8000
+      INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      region-d-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+    networks:
+      - failover_network
+
+  # =========================================================================
+  # 5e. Regional Application Service: Region E (São Paulo, Standby)
+  # =========================================================================
+  region-e:
+    build:
+      context: ./region_service
+      dockerfile: Dockerfile
+    container_name: failoverlab-region-e
+    restart: unless-stopped
+    environment:
+      PORT: 8006
+      REGION_ID: region-e
+      REGION_NAME: São Paulo
+      CLOUD_ZONE: sa-east-1
+      ROLE: STANDBY
+      INITIAL_ROLE: STANDBY
+      INITIAL_EPOCH: 1
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@region-e-db:5432/${REGION_E_DB_NAME:-failover_region_e}"
+      CONTROLLER_URL: http://controller:8000
+      INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      region-e-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
+    networks:
+      - failover_network
   # =========================================================================
   controller:
     build:
@@ -177,6 +435,9 @@ services:
       DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@controller-db:5432/${CONTROLLER_DB_NAME:-failover_controller}"
       REGION_A_URL: http://region-a:8001
       REGION_B_URL: http://region-b:8002
+      REGION_C_URL: http://region-c:8004
+      REGION_D_URL: http://region-d:8005
+      REGION_E_URL: http://region-e:8006
       GATEWAY_URL: http://gateway:8080
       REPLICATION_WORKER_URL: http://replicator:8003
       INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
@@ -193,6 +454,14 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
@@ -209,6 +478,9 @@ services:
       PORT: 8080
       REGION_A_URL: http://region-a:8001
       REGION_B_URL: http://region-b:8002
+      REGION_C_URL: http://region-c:8004
+      REGION_D_URL: http://region-d:8005
+      REGION_E_URL: http://region-e:8006
       CONTROLLER_URL: http://controller:8000
       DEFAULT_TARGET: region-a
       INTERNAL_TOKEN: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
@@ -218,6 +490,12 @@ services:
         condition: service_healthy
       region-b:
         condition: service_healthy
+      region-c:
+        condition: service_healthy
+      region-d:
+        condition: service_healthy
+      region-e:
+        condition: service_healthy
       controller:
         condition: service_healthy
     healthcheck:
@@ -226,6 +504,14 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
@@ -243,6 +529,9 @@ services:
       CONTROLLER_URL: http://controller:8000
       REGION_A_URL: http://region-a:8001
       REGION_B_URL: http://region-b:8002
+      REGION_C_URL: http://region-c:8004
+      REGION_D_URL: http://region-d:8005
+      REGION_E_URL: http://region-e:8006
       INTERNAL_API_SECRET: "${INTERNAL_API_SECRET:?INTERNAL_API_SECRET must be set in .env.production}"
       POLL_INTERVAL_SECONDS: 1.0
       BATCH_SIZE: 50
@@ -254,12 +543,26 @@ services:
         condition: service_healthy
       region-b:
         condition: service_healthy
+      region-c:
+        condition: service_healthy
+      region-d:
+        condition: service_healthy
+      region-e:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 5s
       timeout: 3s
       retries: 5
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 384M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     networks:
       - failover_network
 
@@ -289,6 +592,14 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
+        reservations:
+          cpus: '0.10'
+          memory: 64M
     networks:
       - failover_network
 

@@ -1,0 +1,487 @@
+/* FailoverLab Traffic Lab & 5-Region Operations Cockpit Styles */
+
+.traffic-lab-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  max-width: 1600px;
+  margin: 0 auto;
+  color: #e2e8f0;
+}
+
+.traffic-lab-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.traffic-lab-title h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #f8fafc;
+  margin: 0 0 0.25rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.traffic-lab-title p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+
+.traffic-lab-header-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Section Cards & Panels */
+.traffic-panel {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(51, 65, 85, 0.7);
+  border-radius: 10px;
+  padding: 1.25rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.traffic-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+}
+
+.traffic-panel-header h2,
+.traffic-panel-header h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 5 Regions Grid */
+.five-regions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.region-cockpit-card {
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.region-cockpit-card:hover {
+  border-color: rgba(56, 189, 248, 0.6);
+  transform: translateY(-2px);
+}
+
+.region-cockpit-card.card-active {
+  border-color: #22c55e;
+  background: rgba(34, 197, 94, 0.05);
+  box-shadow: 0 0 16px rgba(34, 197, 94, 0.15);
+}
+
+.region-cockpit-card.card-down {
+  border-color: #ef4444;
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.region-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.region-identity {
+  display: flex;
+  flex-direction: column;
+}
+
+.region-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.region-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #f8fafc;
+}
+
+.region-code-badge {
+  font-family: monospace;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.15);
+  color: #38bdf8;
+}
+
+.region-zone {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-family: monospace;
+}
+
+.region-card-roles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.region-metrics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  border-top: 1px solid rgba(51, 65, 85, 0.4);
+  padding-top: 0.75rem;
+}
+
+.region-metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.region-metric-label {
+  color: #94a3b8;
+}
+
+.region-metric-val {
+  font-family: monospace;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.badge-tag-sm {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.tag-measured {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.tag-simulated {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+/* Regional Comparison Table */
+.traffic-table-container {
+  overflow-x: auto;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 8px;
+}
+
+.traffic-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.traffic-table th {
+  background: rgba(30, 41, 59, 0.9);
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.8);
+  white-space: nowrap;
+}
+
+.traffic-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+  color: #e2e8f0;
+  white-space: nowrap;
+}
+
+.traffic-table tr:hover {
+  background: rgba(51, 65, 85, 0.2);
+}
+
+/* 2-Column Split Grids */
+.traffic-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+@media (max-width: 1024px) {
+  .traffic-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Live Traffic Monitor Table & Filters */
+.monitor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.monitor-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.monitor-filter-select,
+.monitor-search-input {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  border-radius: 6px;
+  color: #f1f5f9;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+.monitor-table-wrap {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 6px;
+}
+
+.pulse-live-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 8px #22c55e;
+  animation: live-blink 1.5s infinite;
+}
+
+@keyframes live-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* Rate Limiter Controls */
+.rate-limiter-modes {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  background: rgba(30, 41, 59, 0.6);
+  color: #94a3b8;
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.mode-btn.active {
+  background: rgba(56, 189, 248, 0.2);
+  border-color: #38bdf8;
+  color: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2);
+}
+
+.rate-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.rate-metric-card {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  text-align: center;
+}
+
+.rate-metric-card .val {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-family: monospace;
+  color: #f8fafc;
+}
+
+.rate-metric-card .lbl {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  margin-top: 0.2rem;
+}
+
+/* Load Generator Panel */
+.load-gen-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.load-gen-options-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.load-btn-group {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.load-size-btn {
+  flex: 1;
+  padding: 0.4rem;
+  border-radius: 4px;
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.load-size-btn.active {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: #22c55e;
+  color: #4ade80;
+}
+
+.progress-track {
+  width: 100%;
+  height: 8px;
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #22c55e);
+  transition: width 0.2s ease;
+}
+
+.region-dist-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.dist-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-family: monospace;
+}
+
+.dist-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(51, 65, 85, 0.4);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.dist-bar-fill {
+  height: 100%;
+  background: #38bdf8;
+}
+
+/* Failover Workflow Stepper */
+.failover-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.failover-step-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  font-size: 0.85rem;
+}
+
+.failover-step-item.step-passed {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.failover-step-item.step-failed {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.failover-step-num {
+  font-family: monospace;
+  font-weight: 700;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(51, 65, 85, 0.7);
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.failover-step-item.step-passed .failover-step-num {
+  background: #22c55e;
+  color: #022c22;
+}
+
+.failover-step-item.step-failed .failover-step-num {
+  background: #ef4444;
+  color: #450a0a;
+}

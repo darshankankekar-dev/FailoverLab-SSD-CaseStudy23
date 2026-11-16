@@ -5,10 +5,12 @@ import {
   Network,
   Cpu,
   GraduationCap,
+  Activity,
 } from 'lucide-react';
 
 export type NavTabId =
   | 'overview'
+  | 'traffic-lab'
   | 'simulator'
   | 'architecture'
   | 'scenarios'
@@ -29,6 +31,12 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
       label: 'Overview',
       icon: Compass,
       badge: null,
+    },
+    {
+      id: 'traffic-lab' as NavTabId,
+      label: 'Traffic Lab & 5-Region',
+      icon: Activity,
+      badge: 'Live SSE',
     },
     {
       id: 'simulator' as NavTabId,

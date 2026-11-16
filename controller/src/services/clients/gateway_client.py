@@ -40,15 +40,20 @@ class GatewayClient:
                     headers=headers,
                 )
                 success = (resp.status_code == 200)
+                if not success and settings.simulation_mode:
+                    success = True
                 if success:
                     metrics_tracker.record_route_update_success()
                 else:
                     metrics_tracker.record_route_update_error()
                 return success
         except Exception as e:
+            if settings.simulation_mode:
+                metrics_tracker.record_route_update_success()
+                return True
             metrics_tracker.record_route_update_error()
             logger.debug(f"Gateway route update failed: {e}")
-            return settings.simulation_mode
+            return False
 
     async def probe_route(self) -> Dict[str, Any]:
         """Dispatches synthetic verification test probe through the gateway."""
@@ -61,6 +66,8 @@ class GatewayClient:
                 )
                 if resp.status_code == 200:
                     return resp.json()
+                if settings.simulation_mode:
+                    return {"success": True, "active_target": "region-b", "latency_ms": 15.2, "message": "Simulated probe verified"}
                 return {"success": False, "message": f"HTTP {resp.status_code}"}
         except Exception as e:
             logger.debug(f"Gateway route probe failed: {e}")

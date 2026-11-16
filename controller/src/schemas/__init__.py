@@ -22,6 +22,7 @@ from .transition import (
 )
 from .state import (
     QuorumVoterModel,
+    DestinationReplicationModel,
     ReplicationStateModel,
     RouteStateModel,
     TelemetryMetricsModel,

@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     # Regional target URL configuration
     region_a_url: str = "http://localhost:8001"
     region_b_url: str = "http://localhost:8002"
+    region_c_url: str = "http://localhost:8004"
+    region_d_url: str = "http://localhost:8005"
+    region_e_url: str = "http://localhost:8006"
     controller_url: str = "http://localhost:8000"
     
     dns_ttl_seconds: int = 2

@@ -4,6 +4,8 @@
  * and the Dynamic Ingress Gateway via same-origin paths or configured URLs.
  */
 
+export type RegionIdType = 'region-a' | 'region-b' | 'region-c' | 'region-d' | 'region-e';
+
 export interface QuorumVoterDto {
   id: string;
   name: string;
@@ -13,7 +15,7 @@ export interface QuorumVoterDto {
 }
 
 export interface RegionDto {
-  id: 'region-a' | 'region-b';
+  id: RegionIdType;
   name: string;
   cloud_zone: string;
   role: 'ACTIVE' | 'STANDBY';
@@ -28,6 +30,9 @@ export interface RegionDto {
   iops: number;
   fencing_epoch: number;
   is_fenced: boolean;
+  applied_sequence?: number;
+  replication_lag_seconds?: number;
+  latency_ms?: number;
 }
 
 export interface PolicyDto {
@@ -42,6 +47,17 @@ export interface PolicyDto {
   auto_failover_enabled: boolean;
 }
 
+export interface DestinationReplicationDto {
+  region_id: string;
+  status: string;
+  lag_seconds: number;
+  lag_ms: number;
+  applied_sequence: number;
+  source_highest_sequence: number;
+  retry_count: number;
+  consecutive_failures: number;
+}
+
 export interface ReplicationStateDto {
   status: 'STREAMING' | 'DEGRADED' | 'SEVERED' | 'REVERSED' | 'SYNCED';
   lag_seconds: number;
@@ -51,10 +67,11 @@ export interface ReplicationStateDto {
   pending_bytes: number;
   bytes_transferred: number;
   mode: string;
+  destinations?: Record<string, DestinationReplicationDto>;
 }
 
 export interface RouteStateDto {
-  active_target: 'region-a' | 'region-b';
+  active_target: RegionIdType;
   dns_ttl_seconds: number;
   propagation_percent: number;
   verification_status: 'UNVERIFIED' | 'VERIFYING' | 'VERIFIED' | 'FAILED';
@@ -73,7 +90,7 @@ export interface TelemetryMetricsDto {
 
 export interface ControllerStateDto {
   controller_state: string;
-  active_region: 'region-a' | 'region-b';
+  active_region: RegionIdType;
   fencing_epoch: number;
   simulated_time_seconds: number;
   consecutive_failures: number;
@@ -85,6 +102,10 @@ export interface ControllerStateDto {
   is_paused_interrupted: boolean;
   region_a: RegionDto;
   region_b: RegionDto;
+  region_c?: RegionDto | null;
+  region_d?: RegionDto | null;
+  region_e?: RegionDto | null;
+  regions?: RegionDto[];
   policy: PolicyDto;
   replication: ReplicationStateDto;
   route: RouteStateDto;
@@ -111,15 +132,61 @@ export interface TransitionResponseDto {
 
 export interface FailoverRequestPayload {
   force?: boolean;
-  target_region?: 'region-a' | 'region-b';
+  target_region?: RegionIdType | 'auto' | string;
   reason?: string;
 }
 
 export interface FailbackRequestPayload {
   operator_id: string;
   confirmation: boolean;
-  target_region?: 'region-a' | 'region-b';
+  target_region?: RegionIdType | string;
   reason?: string;
+}
+
+export interface TrafficEvent {
+  id: string;
+  timestamp: string;
+  request_id: string;
+  method: string;
+  endpoint: string;
+  client_region: string;
+  served_region: string;
+  request_type: string;
+  rate_limiter_decision: 'accepted' | 'rejected' | 'delayed';
+  status_code: number;
+  duration_ms: number;
+  simulated_wan_delay_ms: number;
+  queue_wait_time_ms: number;
+}
+
+export interface TrafficStatusDto {
+  mode: 'OFF' | 'TOKEN_BUCKET' | 'LEAKY_BUCKET';
+  token_bucket: {
+    capacity: number;
+    refill_rate: number;
+    tokens_remaining: number;
+    accepted_requests: number;
+    rejected_requests: number;
+    total_refilled: number;
+    active_client_buckets: number;
+  };
+  leaky_bucket: {
+    queue_capacity: number;
+    drain_rate: number;
+    current_queue_depth: number;
+    processed_requests: number;
+    overflow_requests: number;
+    average_wait_time_ms: number;
+    last_wait_time_ms: number;
+  };
+  common: {
+    total_requests: number;
+    accepted_requests: number;
+    throttled_requests: number;
+    server_failures: number;
+    average_latency_ms: number;
+    p95_latency_ms: number;
+  };
 }
 
 export interface RecordItemDto {
@@ -321,6 +388,168 @@ export class ControllerClient {
     });
     if (!res.ok) throw new Error(`Inject replication lag failed (HTTP ${res.status})`);
     return await res.json();
+  }
+
+  // Regional simulation chaos controls
+  public async setRegionalHealth(regionId: string, health: string): Promise<ControllerStateDto> {
+    const base = this.controllerUrl;
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/regional-health?region_id=${encodeURIComponent(regionId)}&health=${encodeURIComponent(health)}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
+    if (!res.ok) throw new Error(`Set regional health failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async setRegionalLag(regionId: string, lagSeconds: number): Promise<ControllerStateDto> {
+    const base = this.controllerUrl;
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/regional-lag?region_id=${encodeURIComponent(regionId)}&lag_seconds=${lagSeconds}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
+    if (!res.ok) throw new Error(`Set regional lag failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async setRegionalSequence(regionId: string, appliedSequence: number): Promise<ControllerStateDto> {
+    const base = this.controllerUrl;
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/regional-sequence?region_id=${encodeURIComponent(regionId)}&applied_sequence=${appliedSequence}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
+    if (!res.ok) throw new Error(`Set regional sequence failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async setRegionalWanLatency(regionId: string, latencyMs: number): Promise<ControllerStateDto> {
+    const base = this.controllerUrl;
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/regional-wan-latency?region_id=${encodeURIComponent(regionId)}&latency_ms=${latencyMs}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
+    if (!res.ok) throw new Error(`Set regional WAN latency failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async pauseReplication(destination?: string): Promise<ControllerStateDto> {
+    const base = this.controllerUrl;
+    const query = destination ? `?destination=${encodeURIComponent(destination)}` : '';
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/replication-pause${query}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
+    if (!res.ok) throw new Error(`Pause replication failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async resumeReplication(destination?: string): Promise<ControllerStateDto> {
+    const base = this.controllerUrl;
+    const query = destination ? `?destination=${encodeURIComponent(destination)}` : '';
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/replication-resume${query}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
+    if (!res.ok) throw new Error(`Resume replication failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async resetRegional(regionId: string): Promise<ControllerStateDto> {
+    const base = this.controllerUrl;
+    const res = await this.fetchWithTimeout(`${base}/internal/chaos/reset-regional?region_id=${encodeURIComponent(regionId)}`, {
+      method: 'POST',
+      headers: this.getAdminHeaders(),
+    });
+    if (!res.ok) throw new Error(`Reset regional failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  // Traffic management & real-time monitoring
+  public async fetchTrafficStatus(): Promise<TrafficStatusDto | null> {
+    try {
+      const base = this.gatewayUrl;
+      const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/status`, {}, 2500);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  public async updateTrafficConfig(config: {
+    mode?: string;
+    token_capacity?: number;
+    token_refill_rate?: number;
+    leaky_capacity?: number;
+    leaky_drain_rate?: number;
+  }): Promise<any> {
+    const base = this.gatewayUrl;
+    const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) throw new Error(`Update traffic config failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async resetTrafficState(): Promise<any> {
+    const base = this.gatewayUrl;
+    const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error(`Reset traffic state failed (HTTP ${res.status})`);
+    return await res.json();
+  }
+
+  public async fetchTrafficHistory(limit = 100): Promise<TrafficEvent[]> {
+    try {
+      const base = this.gatewayUrl;
+      const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/history?limit=${limit}`, {}, 3000);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.events || [];
+    } catch {
+      return [];
+    }
+  }
+
+  public subscribeTrafficEvents(onEvent: (event: TrafficEvent) => void): () => void {
+    if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+      return () => {};
+    }
+    const base = this.gatewayUrl;
+    const url = `${base}/api/v1/traffic/events`;
+    let es: EventSource | null = null;
+    let isClosed = false;
+
+    try {
+      es = new EventSource(url);
+      es.onmessage = (e) => {
+        if (!e.data || isClosed) return;
+        try {
+          const parsed = JSON.parse(e.data);
+          if (parsed && parsed.request_id) {
+            onEvent(parsed);
+          }
+        } catch {
+          // ignore parse errors for ping heartbeats
+        }
+      };
+      es.onerror = () => {
+        // Fallback or retry handled by browser EventSource
+      };
+    } catch {
+      // EventSource failed to instantiate
+    }
+
+    return () => {
+      isClosed = true;
+      if (es) {
+        es.close();
+        es = null;
+      }
+    };
   }
 
   // Gateway data proxying

@@ -3,10 +3,13 @@ from fastapi import APIRouter, Depends, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db_session
 from ..security import verify_internal_access
+from sqlalchemy import select, func
+from ..models import RegionalMetadataEntity, AppliedReplicationEventEntity
 from ..schemas import (
     OutboxBatchResponse,
     ReplicationApplyRequest,
     ReplicationApplyResponse,
+    CheckpointResponse,
 )
 from ..services.replication_service import (
     get_outbox_events,
@@ -57,4 +60,28 @@ async def acknowledge_replicated_events(
     """Marks outbox events as confirmed delivered."""
     count = await mark_events_replicated(session, event_ids)
     return {"acknowledged_count": count}
+
+
+@router.get("/checkpoint", response_model=CheckpointResponse)
+async def get_replication_checkpoint(
+    session: AsyncSession = Depends(get_db_session),
+) -> CheckpointResponse:
+    """
+    Returns the target region's current applied replication checkpoint.
+    Allows the replication worker to safely resume per-destination replication without desync.
+    """
+    res_meta = await session.execute(select(RegionalMetadataEntity).where(RegionalMetadataEntity.id == 1))
+    meta = res_meta.scalar_one_or_none()
+    res_app_seq = await session.execute(select(func.max(AppliedReplicationEventEntity.source_sequence_id)))
+    applied_seq = res_app_seq.scalar() or 0
+    res_count = await session.execute(select(func.count(AppliedReplicationEventEntity.event_id)))
+    total_applied = res_count.scalar() or 0
+    return CheckpointResponse(
+        region_id=meta.region_id if meta else "unknown",
+        region_name=meta.region_name if meta else "unknown",
+        role=meta.role if meta else "STANDBY",
+        last_applied_sequence_id=applied_seq,
+        total_applied_events=total_applied,
+        fencing_epoch=meta.fencing_epoch if meta else 101,
+    )
 

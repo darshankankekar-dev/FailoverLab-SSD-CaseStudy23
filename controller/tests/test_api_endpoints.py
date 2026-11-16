@@ -43,8 +43,8 @@ async def test_regions_endpoints(client):
     resp = await client.get("/api/v1/regions")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data) == 2
-    assert {r["id"] for r in data} == {"region-a", "region-b"}
+    assert len(data) >= 2
+    assert {"region-a", "region-b"}.issubset({r["id"] for r in data})
 
     # Get single region
     resp_a = await client.get("/api/v1/regions/region-a")

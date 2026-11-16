@@ -26,10 +26,11 @@ async def trigger_failover(
     Triggers the 10-step multi-region active-passive failover decision workflow.
     Validates all safety gates and persists transition intent before applying side effects.
     """
+    target = payload.target_region.value if hasattr(payload.target_region, "value") else str(payload.target_region or "auto")
     result = await execute_failover_workflow(
         session=session,
         force=payload.force,
-        target_region=payload.target_region.value if payload.target_region else "region-b",
+        target_region=target,
         reason=payload.reason or "Manual failover drill requested via API",
     )
 

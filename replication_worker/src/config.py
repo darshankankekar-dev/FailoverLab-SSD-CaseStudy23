@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     controller_url: str = "http://localhost:8000"
     region_a_url: str = "http://localhost:8001"
     region_b_url: str = "http://localhost:8002"
+    region_c_url: str = "http://localhost:8004"
+    region_d_url: str = "http://localhost:8005"
+    region_e_url: str = "http://localhost:8006"
 
     # Replication parameters
     poll_interval_sec: float = 0.5

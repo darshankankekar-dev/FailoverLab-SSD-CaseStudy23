@@ -49,40 +49,26 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             route_verification_sec=2.0,
             auto_failover_enabled=True,
         ))
-        session.add(RegionEntity(
-            id="region-a",
-            name="Mumbai",
-            cloud_zone="ap-south-1",
-            role="ACTIVE",
-            health="HEALTHY",
-            status="healthy",
-            accepts_writes=True,
-            ingress_traffic_percent=100,
-            ingress_rps=2450,
-            app_servers_healthy=12,
-            app_servers_total=12,
-            active_connections=2450,
-            iops=4800,
-            fencing_epoch=101,
-            is_fenced=False,
-        ))
-        session.add(RegionEntity(
-            id="region-b",
-            name="Singapore",
-            cloud_zone="ap-southeast-1",
-            role="STANDBY",
-            health="HEALTHY",
-            status="healthy",
-            accepts_writes=False,
-            ingress_traffic_percent=0,
-            ingress_rps=0,
-            app_servers_healthy=12,
-            app_servers_total=12,
-            active_connections=0,
-            iops=120,
-            fencing_epoch=101,
-            is_fenced=False,
-        ))
+        from src.domain.registry import REGION_REGISTRY
+        for reg_id, reg_def in REGION_REGISTRY.items():
+            is_active = (reg_def.initial_role == "ACTIVE")
+            session.add(RegionEntity(
+                id=reg_def.region_id,
+                name=reg_def.name,
+                cloud_zone=reg_def.cloud_zone,
+                role=reg_def.initial_role,
+                health="HEALTHY",
+                status="healthy",
+                accepts_writes=is_active,
+                ingress_traffic_percent=100 if is_active else 0,
+                ingress_rps=2450 if is_active else 0,
+                app_servers_healthy=12,
+                app_servers_total=12,
+                active_connections=2450 if is_active else 0,
+                iops=reg_def.baseline_iops,
+                fencing_epoch=101,
+                is_fenced=False,
+            ))
         session.add(ControllerStateEntity(
             id=1,
             current_state="HEALTHY",

@@ -14,6 +14,7 @@ from ..schemas import (
     MetricsResponse,
     RegionResponse,
     PolicyResponse,
+    DestinationReplicationModel,
     ReplicationStateModel,
     RouteStateModel,
     QuorumVoterModel,
@@ -26,6 +27,7 @@ from ..schemas import (
 )
 from ..schemas.state import TruthfulFailoverMetricsModel
 from .metrics_tracker import metrics_tracker
+from ..domain.registry import get_region_definition
 
 
 async def get_full_state(session: AsyncSession) -> StateResponse:
@@ -36,11 +38,39 @@ async def get_full_state(session: AsyncSession) -> StateResponse:
     res_policy = await session.execute(select(PolicyEntity).where(PolicyEntity.id == 1))
     policy = res_policy.scalar_one()
 
-    res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
-    region_a = res_a.scalar_one()
+    res_all_regions = await session.execute(select(RegionEntity).order_by(RegionEntity.id))
+    region_entities = {r.id: r for r in res_all_regions.scalars().all()}
 
-    res_b = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-b"))
-    region_b = res_b.scalar_one()
+    def to_region_resp(entity: RegionEntity) -> RegionResponse:
+        reg_def = get_region_definition(entity.id)
+        latency = reg_def.nominal_latency_ms if reg_def else 30
+        return RegionResponse(
+            id=RegionId(entity.id),
+            name=entity.name,
+            cloud_zone=entity.cloud_zone,
+            role=entity.role,
+            health=entity.health,
+            status=entity.status,
+            accepts_writes=entity.accepts_writes,
+            ingress_traffic_percent=entity.ingress_traffic_percent,
+            ingress_rps=entity.ingress_rps,
+            app_servers_healthy=entity.app_servers_healthy,
+            app_servers_total=entity.app_servers_total,
+            active_connections=entity.active_connections,
+            iops=entity.iops,
+            fencing_epoch=entity.fencing_epoch,
+            is_fenced=entity.is_fenced,
+            applied_sequence=getattr(entity, "applied_sequence", 0),
+            replication_lag_seconds=getattr(entity, "replication_lag_seconds", 0.8),
+            latency_ms=latency,
+        )
+
+    all_region_responses = [to_region_resp(r) for r in region_entities.values()]
+    region_a_resp = to_region_resp(region_entities["region-a"]) if "region-a" in region_entities else None
+    region_b_resp = to_region_resp(region_entities["region-b"]) if "region-b" in region_entities else None
+    region_c_resp = to_region_resp(region_entities["region-c"]) if "region-c" in region_entities else None
+    region_d_resp = to_region_resp(region_entities["region-d"]) if "region-d" in region_entities else None
+    region_e_resp = to_region_resp(region_entities["region-e"]) if "region-e" in region_entities else None
 
     res_rep = await session.execute(select(ReplicationEntity).where(ReplicationEntity.id == 1))
     replication = res_rep.scalar_one()
@@ -88,40 +118,12 @@ async def get_full_state(session: AsyncSession) -> StateResponse:
         route_retry_count=c_state.route_retry_count,
         persisted_intent=c_state.persisted_intent,
         is_paused_interrupted=c_state.is_paused_interrupted,
-        region_a=RegionResponse(
-            id=RegionId(region_a.id),
-            name=region_a.name,
-            cloud_zone=region_a.cloud_zone,
-            role=region_a.role,
-            health=region_a.health,
-            status=region_a.status,
-            accepts_writes=region_a.accepts_writes,
-            ingress_traffic_percent=region_a.ingress_traffic_percent,
-            ingress_rps=region_a.ingress_rps,
-            app_servers_healthy=region_a.app_servers_healthy,
-            app_servers_total=region_a.app_servers_total,
-            active_connections=region_a.active_connections,
-            iops=region_a.iops,
-            fencing_epoch=region_a.fencing_epoch,
-            is_fenced=region_a.is_fenced,
-        ),
-        region_b=RegionResponse(
-            id=RegionId(region_b.id),
-            name=region_b.name,
-            cloud_zone=region_b.cloud_zone,
-            role=region_b.role,
-            health=region_b.health,
-            status=region_b.status,
-            accepts_writes=region_b.accepts_writes,
-            ingress_traffic_percent=region_b.ingress_traffic_percent,
-            ingress_rps=region_b.ingress_rps,
-            app_servers_healthy=region_b.app_servers_healthy,
-            app_servers_total=region_b.app_servers_total,
-            active_connections=region_b.active_connections,
-            iops=region_b.iops,
-            fencing_epoch=region_b.fencing_epoch,
-            is_fenced=region_b.is_fenced,
-        ),
+        region_a=region_a_resp,
+        region_b=region_b_resp,
+        region_c=region_c_resp,
+        region_d=region_d_resp,
+        region_e=region_e_resp,
+        regions=all_region_responses,
         policy=PolicyResponse(
             health_check_interval_sec=policy.health_check_interval_sec,
             failure_threshold_consecutive=policy.failure_threshold_consecutive,
@@ -142,6 +144,24 @@ async def get_full_state(session: AsyncSession) -> StateResponse:
             pending_bytes=replication.pending_bytes,
             bytes_transferred=replication.bytes_transferred,
             mode=replication.mode,
+            destinations={
+                r_id: DestinationReplicationModel(
+                    region_id=r_id,
+                    status=(
+                        "DEGRADED"
+                        if getattr(region_entities[r_id], "replication_lag_seconds", replication.lag_seconds) > policy.acceptable_replication_lag_sec
+                        else (replication.status if replication.status != "STREAMING" else "STREAMING")
+                    ),
+                    lag_seconds=getattr(region_entities[r_id], "replication_lag_seconds", replication.lag_seconds),
+                    lag_ms=int(getattr(region_entities[r_id], "replication_lag_seconds", replication.lag_seconds) * 1000),
+                    applied_sequence=getattr(region_entities[r_id], "applied_sequence", 0),
+                    source_highest_sequence=getattr(region_entities[r_id], "applied_sequence", 0),
+                    retry_count=0,
+                    consecutive_failures=0,
+                )
+                for r_id in region_entities.keys()
+                if r_id != c_state.active_region
+            },
         ),
         route=RouteStateModel(
             active_target=RegionId(route.active_target),
@@ -167,7 +187,7 @@ async def get_metrics(session: AsyncSession) -> MetricsResponse:
     """Returns focused operational and telemetry metrics."""
     full_state = await get_full_state(session)
     summary = metrics_tracker.get_summary()
-    healthy_count = sum(1 for r in [full_state.region_a, full_state.region_b] if r.health.upper() == "HEALTHY")
+    healthy_count = sum(1 for r in (full_state.regions or [full_state.region_a, full_state.region_b]) if r and r.health.upper() == "HEALTHY")
     truthful = TruthfulFailoverMetricsModel(
         failover_attempts_total=summary["failover_attempts_total"],
         failover_successes_total=summary["failover_successes_total"],

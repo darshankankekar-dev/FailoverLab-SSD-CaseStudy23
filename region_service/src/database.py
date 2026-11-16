@@ -39,6 +39,12 @@ async def init_db() -> None:
     logger.info(f"Initializing database for region '{settings.region_id}' ({settings.region_name})...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            from sqlalchemy import text
+            await conn.execute(text("ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS payload_hash VARCHAR(64) DEFAULT '';"))
+            await conn.execute(text("ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS source_region_id VARCHAR(32) DEFAULT 'region-a';"))
+        except Exception:
+            pass
 
     async with AsyncSessionLocal() as session:
         async with session.begin():

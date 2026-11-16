@@ -19,6 +19,18 @@ class QuorumVoterModel(BaseModel):
     latency_ms: int
 
 
+class DestinationReplicationModel(BaseModel):
+    region_id: str
+    status: str = "STREAMING"
+    lag_seconds: float = 0.8
+    lag_ms: int = 800
+    applied_sequence: int = 0
+    source_highest_sequence: int = 0
+    retry_count: int = 0
+    consecutive_failures: int = 0
+    last_error: Optional[str] = None
+
+
 class ReplicationStateModel(BaseModel):
     status: ReplicationStatus = ReplicationStatus.STREAMING
     lag_seconds: float = 0.8
@@ -28,6 +40,7 @@ class ReplicationStateModel(BaseModel):
     pending_bytes: int = 12400
     bytes_transferred: int = 45000000
     mode: str = "ASYNCHRONOUS_RECORD"
+    destinations: Dict[str, DestinationReplicationModel] = Field(default_factory=dict)
 
 
 class RouteStateModel(BaseModel):
@@ -65,6 +78,10 @@ class StateResponse(BaseModel):
 
     region_a: RegionResponse
     region_b: RegionResponse
+    region_c: Optional[RegionResponse] = None
+    region_d: Optional[RegionResponse] = None
+    region_e: Optional[RegionResponse] = None
+    regions: List[RegionResponse] = Field(default_factory=list)
     policy: PolicyResponse
     replication: ReplicationStateModel
     route: RouteStateModel
@@ -80,7 +97,7 @@ class TruthfulFailoverMetricsModel(BaseModel):
     route_update_attempts_total: int = 0
     route_update_successes_total: int = 0
     route_update_errors_total: int = 0
-    healthy_regions_count: int = 2
+    healthy_regions_count: int = 5
     last_lab_recovery_seconds: Optional[float] = None
     is_simulated_lab_metric: bool = True
     metric_caveat: str = (

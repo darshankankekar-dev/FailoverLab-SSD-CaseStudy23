@@ -7,14 +7,16 @@ import {
   Activity,
   Layers,
   AlertTriangle,
+  ShoppingBag,
 } from 'lucide-react';
 import { useSimulation } from '../../simulation/useSimulation';
 
 interface HeaderProps {
   onOpenMethodology: () => void;
+  onNavigateToShop?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenMethodology }) => {
+export const Header: React.FC<HeaderProps> = ({ onOpenMethodology, onNavigateToShop }) => {
   const {
     regionA,
     regionB,
@@ -175,6 +177,25 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMethodology }) => {
           <BookOpen size={14} />
           <span className="header-btn-label">Methodology</span>
         </button>
+
+        {/* Switch to Online Store Demo */}
+        {onNavigateToShop && (
+          <button
+            className="btn-console header-action-btn btn-store-switch"
+            onClick={onNavigateToShop}
+            title="Launch the integrated Online Shopping demo storefront (/shop)"
+            aria-label="Open Online Store demonstration"
+            style={{
+              background: '#0284c7',
+              borderColor: '#0284c7',
+              color: '#ffffff',
+              fontWeight: 600,
+            }}
+          >
+            <ShoppingBag size={14} />
+            <span className="header-btn-label">Online Store</span>
+          </button>
+        )}
       </div>
     </header>
   );

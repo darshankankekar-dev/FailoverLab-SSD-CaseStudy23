@@ -11,6 +11,7 @@ from .api.health import router as health_router
 from .api.records import router as records_router
 from .api.replication import router as replication_router
 from .api.admin import admin_router
+from .api.ecommerce import router as ecommerce_router
 
 setup_structured_logging(service_name=f"region-{settings.region_id}", log_level=settings.log_level)
 logger = logging.getLogger("region.main")
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(records_router)
     app.include_router(replication_router)
     app.include_router(admin_router)
+    app.include_router(ecommerce_router)
 
     return app
 

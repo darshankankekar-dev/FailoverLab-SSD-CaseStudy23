@@ -25,11 +25,8 @@ async def get_prometheus_metrics(session: AsyncSession = Depends(get_db_session)
     res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
     c_state = res_state.scalar_one()
 
-    res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
-    region_a = res_a.scalar_one()
-
-    res_b = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-b"))
-    region_b = res_b.scalar_one()
+    res_regions = await session.execute(select(RegionEntity).order_by(RegionEntity.id))
+    regions = list(res_regions.scalars().all())
 
     res_rep = await session.execute(select(ReplicationEntity).where(ReplicationEntity.id == 1))
     replication = res_rep.scalar_one()
@@ -37,8 +34,8 @@ async def get_prometheus_metrics(session: AsyncSession = Depends(get_db_session)
     res_route = await session.execute(select(RouteEntity).where(RouteEntity.id == 1))
     route = res_route.scalar_one()
 
-    # Calculate healthy regions count
-    healthy_count = sum(1 for r in [region_a, region_b] if r.health.upper() == "HEALTHY")
+    # Calculate healthy regions count across all registered regions
+    healthy_count = sum(1 for r in regions if r.health.upper() == "HEALTHY")
 
     tracker_summary = metrics_tracker.get_summary()
 
@@ -53,8 +50,11 @@ async def get_prometheus_metrics(session: AsyncSession = Depends(get_db_session)
         "",
         "# HELP failoverlab_active_region Binary indicator of currently active primary region",
         "# TYPE failoverlab_active_region gauge",
-        f'failoverlab_active_region{{region="region-a"}} {1 if c_state.active_region == "region-a" else 0}',
-        f'failoverlab_active_region{{region="region-b"}} {1 if c_state.active_region == "region-b" else 0}',
+    ]
+    for r in regions:
+        lines.append(f'failoverlab_active_region{{region="{r.id}"}} {1 if c_state.active_region == r.id else 0}')
+
+    lines.extend([
         "",
         "# HELP failoverlab_fencing_epoch Authoritative monotonic fencing epoch generation",
         "# TYPE failoverlab_fencing_epoch gauge",
@@ -80,7 +80,7 @@ async def get_prometheus_metrics(session: AsyncSession = Depends(get_db_session)
         f'failoverlab_route_updates_total{{status="success"}} {tracker_summary["route_update_successes_total"]}',
         f'failoverlab_route_updates_total{{status="error"}} {tracker_summary["route_update_errors_total"]}',
         "",
-    ]
+    ])
 
     # Include lab recovery time if measured
     if tracker_summary["last_lab_recovery_seconds"] is not None:

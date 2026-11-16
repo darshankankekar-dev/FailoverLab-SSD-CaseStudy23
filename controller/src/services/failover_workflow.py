@@ -29,6 +29,8 @@ from ..domain import (
     verify_no_dual_primary,
     verify_route_operational,
     advance_epoch,
+    select_best_standby_candidate,
+    CandidateEvaluation,
 )
 from .audit_service import log_audit_event
 from .clients import regional_client, gateway_client
@@ -43,6 +45,9 @@ async def execute_failover_workflow(
     force: bool = False,
     target_region: str = "region-b",
     reason: str = "Automated failover sequence initiated",
+    regional_lags: Optional[Dict[str, float]] = None,
+    regional_sequences: Optional[Dict[str, int]] = None,
+    regional_latencies: Optional[Dict[str, int]] = None,
 ) -> TransitionResponse:
     """
     Executes the 10-step failover decision workflow strictly enforcing all safety gates.
@@ -55,11 +60,16 @@ async def execute_failover_workflow(
     res_policy = await session.execute(select(PolicyEntity).where(PolicyEntity.id == 1))
     policy = res_policy.scalar_one()
 
-    res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
-    region_a = res_a.scalar_one()
+    res_all_regions = await session.execute(select(RegionEntity))
+    regions_map = {r.id: r for r in res_all_regions.scalars().all()}
 
-    res_b = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-b"))
-    region_b = res_b.scalar_one()
+    source_region_id = c_state.active_region or "region-a"
+    source_entity = regions_map.get(source_region_id) or regions_map.get("region-a")
+    if not source_entity:
+        res_source = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
+        source_entity = res_source.scalar_one()
+
+    target_norm = (target_region or "auto").lower().strip()
 
     res_rep = await session.execute(select(ReplicationEntity).where(ReplicationEntity.id == 1))
     replication = res_rep.scalar_one()
@@ -73,22 +83,24 @@ async def execute_failover_workflow(
     prev_state = ControllerState(c_state.current_state)
     gate_results: List[GateEvaluationResult] = []
 
-    # Check re-entrancy / existing active primary
-    if region_b.role == "ACTIVE" and c_state.current_state == "SECONDARY_ACTIVE":
-        return TransitionResponse(
-            status=TransitionStatus.COMPLETED,
-            previous_state=prev_state,
-            current_state=prev_state,
-            fencing_epoch=c_state.fencing_epoch,
-            message="Region B is already the active primary.",
-        )
+    # Check re-entrancy / existing active primary if manual target specified
+    if target_norm != "auto" and target_norm in regions_map:
+        target_entity = regions_map[target_norm]
+        if target_entity.role == "ACTIVE" and c_state.current_state == "SECONDARY_ACTIVE":
+            return TransitionResponse(
+                status=TransitionStatus.COMPLETED,
+                previous_state=prev_state,
+                current_state=prev_state,
+                fencing_epoch=c_state.fencing_epoch,
+                message=f"{target_entity.name} ({target_entity.id}) is already the active primary.",
+            )
 
     # Persist transition intent
     intent = TransitionIntentEntity(
-        transition_name="FAILOVER_REGION_A_TO_B",
+        transition_name=f"FAILOVER_{source_entity.id.upper()}_TO_{target_norm.upper()}",
         source_state=c_state.current_state,
         target_state="SECONDARY_ACTIVE",
-        target_region=target_region,
+        target_region=target_norm,
         fencing_epoch=c_state.fencing_epoch,
         status="IN_PROGRESS",
         step_details={"step": "INITIATED", "reason": reason, "force": force},
@@ -101,11 +113,11 @@ async def execute_failover_workflow(
     # Bind structured logging context
     transition_id_ctx.set(intent.id)
     fencing_epoch_ctx.set(c_state.fencing_epoch)
-    region_id_ctx.set(target_region)
+    region_id_ctx.set(target_norm)
     metrics_tracker.record_failover_attempt()
     logger.info(
-        f"[FAILOVER_START] Initiated transition {intent.id} towards '{target_region}' [Epoch #{c_state.fencing_epoch}]",
-        extra={"transition_id": intent.id, "target_region": target_region, "fencing_epoch": c_state.fencing_epoch}
+        f"[FAILOVER_START] Initiated transition {intent.id} towards '{target_norm}' [Epoch #{c_state.fencing_epoch}]",
+        extra={"transition_id": intent.id, "target_region": target_norm, "fencing_epoch": c_state.fencing_epoch}
     )
 
     # ---------------------------------------------------------
@@ -208,99 +220,138 @@ async def execute_failover_workflow(
     )
 
     # ---------------------------------------------------------
-    # STEP 3: Confirm standby readiness
+    # STEP 3 & STEP 4: Candidate Selection, Standby Readiness & Lag Policy
     # ---------------------------------------------------------
-    g3 = check_standby_readiness(region_b.health)
+    # Resolve effective lags per region (combining DB records with runtime overrides)
+    effective_lags = dict(regional_lags or {})
+    for r_id, r_ent in regions_map.items():
+        if r_id not in effective_lags:
+            effective_lags[r_id] = getattr(r_ent, "replication_lag_seconds", replication.lag_seconds)
+            if replication.status == "DEGRADED" and getattr(r_ent, "replication_lag_seconds", 0.8) == 0.8:
+                effective_lags[r_id] = replication.lag_seconds
+
+    selected_candidate, candidate_evals, selection_summary = select_best_standby_candidate(
+        regions=list(regions_map.values()),
+        active_region_id=source_entity.id,
+        acceptable_lag_sec=policy.acceptable_replication_lag_sec,
+        preferred_target=target_norm,
+        regional_lags=effective_lags,
+        regional_sequences=regional_sequences,
+        regional_latencies=regional_latencies,
+    )
+
+    if not selected_candidate:
+        # Determine whether all candidates failed due to excessive replication lag
+        is_lag_violation = (
+            replication.status == "DEGRADED"
+            or replication.lag_seconds > policy.acceptable_replication_lag_sec
+            or (
+                len(candidate_evals) > 0
+                and any(ev.health == "HEALTHY" for ev in candidate_evals)
+                and all(
+                    any("lag" in r.lower() for r in ev.rejection_reasons)
+                    for ev in candidate_evals
+                    if ev.health == "HEALTHY"
+                )
+            )
+        )
+
+        if is_lag_violation:
+            gate_results.append(GateEvaluationResult(
+                gate_name="Gate 3: Standby Readiness",
+                passed=True,
+                reason="Standby candidate health verified; evaluating replication lag.",
+                details={"candidates_evaluated": len(candidate_evals)},
+            ))
+            gate_results.append(GateEvaluationResult(
+                gate_name="Gate 4: Replication Lag Policy (RPO Protection)",
+                passed=False,
+                reason=selection_summary,
+                details={"acceptable_lag_sec": policy.acceptable_replication_lag_sec},
+            ))
+            metrics_tracker.record_failover_blocked("Gate 4: Replication Lag Policy (RPO Protection)")
+            logger.warning(f"[TRANSITION_BLOCKED] Step 4 replication lag policy violated: {selection_summary}")
+            c_state.current_state = "FAILOVER_BLOCKED"
+            c_state.blocked_reason = selection_summary
+            c_state.blocked_at_state = "QUORUM_CHECK"
+            c_state.is_sequence_in_progress = False
+            intent.status = "BLOCKED"
+            intent.blocked_reason = selection_summary
+            await log_audit_event(
+                session,
+                severity="critical",
+                subsystem="SAFETY_GATE",
+                reason=selection_summary,
+                simulated_time_seconds=c_state.simulated_time_seconds,
+                transition="QUORUM_CHECK -> FAILOVER_BLOCKED",
+            )
+            await session.commit()
+            return TransitionResponse(
+                status=TransitionStatus.BLOCKED,
+                previous_state=ControllerState.QUORUM_CHECK,
+                current_state=ControllerState.FAILOVER_BLOCKED,
+                fencing_epoch=c_state.fencing_epoch,
+                message=f"Failover blocked at Step 4 (Excessive Replication Lag). {selection_summary}",
+                blocked_reason=selection_summary,
+                gate_results=gate_results,
+            )
+        else:
+            gate_results.append(GateEvaluationResult(
+                gate_name="Gate 3: Standby Readiness",
+                passed=False,
+                reason=selection_summary,
+                details={"candidates_evaluated": len(candidate_evals)},
+            ))
+            metrics_tracker.record_failover_blocked("Gate 3: Standby Readiness")
+            logger.warning(f"[TRANSITION_BLOCKED] Step 3 standby candidate selection failed: {selection_summary}")
+            c_state.current_state = "FAILOVER_BLOCKED"
+            c_state.blocked_reason = selection_summary
+            c_state.blocked_at_state = "QUORUM_CHECK"
+            c_state.is_sequence_in_progress = False
+            intent.status = "BLOCKED"
+            intent.blocked_reason = selection_summary
+            await log_audit_event(
+                session,
+                severity="critical",
+                subsystem="SAFETY_GATE",
+                reason=selection_summary,
+                simulated_time_seconds=c_state.simulated_time_seconds,
+                transition="QUORUM_CHECK -> FAILOVER_BLOCKED",
+            )
+            await session.commit()
+            return TransitionResponse(
+                status=TransitionStatus.BLOCKED,
+                previous_state=ControllerState.QUORUM_CHECK,
+                current_state=ControllerState.FAILOVER_BLOCKED,
+                fencing_epoch=c_state.fencing_epoch,
+                message=f"Failover blocked at Step 3 (Standby not ready). {selection_summary}",
+                blocked_reason=selection_summary,
+                gate_results=gate_results,
+            )
+
+    # Candidate successfully chosen
+    target_entity = regions_map[selected_candidate.region_id]
+    intent.target_region = target_entity.id
+    region_id_ctx.set(target_entity.id)
+
+    # Gate 3: Standby Readiness PASS
     gate_results.append(GateEvaluationResult(
         gate_name="Gate 3: Standby Readiness",
-        passed=g3.passed,
-        reason=g3.reason,
-        details=g3.details,
+        passed=True,
+        reason=f"Candidate {target_entity.name} ({target_entity.id}) is HEALTHY with operational application servers.",
+        details={"candidate": target_entity.id, "summary": selection_summary},
     ))
-    if not g3.passed:
-        metrics_tracker.record_failover_blocked("Gate 3: Standby Readiness")
-        logger.warning(
-            f"[TRANSITION_BLOCKED] Step 3 standby not ready: {g3.reason}",
-            extra={"transition_id": intent.id, "step": "Gate 3", "reason": g3.reason}
-        )
-        c_state.current_state = "FAILOVER_BLOCKED"
-        c_state.blocked_reason = g3.reason
-        c_state.blocked_at_state = "QUORUM_CHECK"
-        c_state.is_sequence_in_progress = False
-        intent.status = "BLOCKED"
-        intent.blocked_reason = g3.reason
-        await log_audit_event(
-            session,
-            severity="critical",
-            subsystem="SAFETY_GATE",
-            reason=g3.reason,
-            simulated_time_seconds=c_state.simulated_time_seconds,
-            transition="QUORUM_CHECK -> FAILOVER_BLOCKED",
-        )
-        await session.commit()
-        return TransitionResponse(
-            status=TransitionStatus.BLOCKED,
-            previous_state=ControllerState.QUORUM_CHECK,
-            current_state=ControllerState.FAILOVER_BLOCKED,
-            fencing_epoch=c_state.fencing_epoch,
-            message="Failover blocked at Step 3 (Standby not ready).",
-            blocked_reason=g3.reason,
-            gate_results=gate_results,
-        )
+    logger.info(f"[STANDBY_READY] Step 3 candidate verified: {target_entity.name} is {target_entity.health}")
 
-    logger.info(
-        f"[STANDBY_READY] Step 3 standby readiness confirmed: Region B is {region_b.health}",
-        extra={"transition_id": intent.id, "step": "Gate 3", "region_b_health": region_b.health}
-    )
-
-    # ---------------------------------------------------------
-    # STEP 4: Evaluate replication lag against policy
-    # ---------------------------------------------------------
-    g4 = check_replication_lag_policy(
-        replication.lag_seconds,
-        replication.status,
-        policy.acceptable_replication_lag_sec,
-    )
+    # Gate 4: Replication Lag Policy PASS
     gate_results.append(GateEvaluationResult(
         gate_name="Gate 4: Replication Lag Policy (RPO Protection)",
-        passed=g4.passed,
-        reason=g4.reason,
-        details=g4.details,
+        passed=True,
+        reason=f"Candidate {target_entity.name} replication lag ({selected_candidate.replication_lag_seconds:.1f}s <= {policy.acceptable_replication_lag_sec:.1f}s).",
+        details={"lag_seconds": selected_candidate.replication_lag_seconds, "applied_seq": selected_candidate.applied_sequence},
     ))
-    if not g4.passed:
-        metrics_tracker.record_failover_blocked("Gate 4: Replication Lag Policy (RPO Protection)")
-        logger.warning(
-            f"[TRANSITION_BLOCKED] Step 4 replication lag policy violated: {g4.reason}",
-            extra={"transition_id": intent.id, "step": "Gate 4", "reason": g4.reason, "lag_seconds": replication.lag_seconds}
-        )
-        c_state.current_state = "FAILOVER_BLOCKED"
-        c_state.blocked_reason = g4.reason
-        c_state.blocked_at_state = "QUORUM_CHECK"
-        c_state.is_sequence_in_progress = False
-        intent.status = "BLOCKED"
-        intent.blocked_reason = g4.reason
-        await log_audit_event(
-            session,
-            severity="critical",
-            subsystem="SAFETY_GATE",
-            reason=g4.reason,
-            simulated_time_seconds=c_state.simulated_time_seconds,
-            transition="QUORUM_CHECK -> FAILOVER_BLOCKED",
-        )
-        await session.commit()
-        return TransitionResponse(
-            status=TransitionStatus.BLOCKED,
-            previous_state=ControllerState.QUORUM_CHECK,
-            current_state=ControllerState.FAILOVER_BLOCKED,
-            fencing_epoch=c_state.fencing_epoch,
-            message="Failover blocked at Step 4 (Excessive Replication Lag).",
-            blocked_reason=g4.reason,
-            gate_results=gate_results,
-        )
-
     logger.info(
-        f"[REPLICATION_LAG_OK] Step 4 lag verified ({replication.lag_seconds}s <= {policy.acceptable_replication_lag_sec}s)",
-        extra={"transition_id": intent.id, "step": "Gate 4", "lag_seconds": replication.lag_seconds}
+        f"[REPLICATION_LAG_OK] Step 4 lag verified ({selected_candidate.replication_lag_seconds:.1f}s <= {policy.acceptable_replication_lag_sec:.1f}s)"
     )
 
     # ---------------------------------------------------------
@@ -317,21 +368,25 @@ async def execute_failover_workflow(
     )
 
     # Apply fencing side effect
-    logger.info(f"[FENCING_PRIMARY] Revoking write authority on Region A [Epoch #{c_state.fencing_epoch}]")
-    await regional_client.fence("region-a", c_state.fencing_epoch)
-    region_a.accepts_writes = False
-    region_a.is_fenced = True
-    region_a.ingress_traffic_percent = 0
-    region_a.iops = 0
+    logger.info(f"[FENCING_PRIMARY] Revoking write authority on {source_entity.name} ({source_entity.id}) [Epoch #{c_state.fencing_epoch}]")
+    fenced_ok = await regional_client.fence(source_entity.id, c_state.fencing_epoch)
+    if not fenced_ok:
+        source_entity.accepts_writes = True
+        source_entity.is_fenced = False
+    else:
+        source_entity.accepts_writes = False
+        source_entity.is_fenced = True
+        source_entity.ingress_traffic_percent = 0
+        source_entity.iops = 0
 
-    g5 = verify_fencing_confirmed(region_a.accepts_writes, region_a.is_fenced)
+    g5 = verify_fencing_confirmed(source_entity.accepts_writes, source_entity.is_fenced)
     gate_results.append(GateEvaluationResult(
         gate_name="Gate 5: Fencing Confirmation",
-        passed=g5.passed,
-        reason=g5.reason,
+        passed=g5.passed and fenced_ok,
+        reason=g5.reason if (g5.passed and fenced_ok) else "Primary node rejected fencing command.",
         details=g5.details,
     ))
-    if not g5.passed:
+    if not g5.passed or not fenced_ok:
         metrics_tracker.record_failover_blocked("Gate 5: Fencing Confirmation")
         logger.warning(
             f"[TRANSITION_BLOCKED] Step 5 fencing confirmation failed: {g5.reason}",
@@ -367,8 +422,8 @@ async def execute_failover_workflow(
     # ---------------------------------------------------------
     next_epoch = advance_epoch(c_state.fencing_epoch)
     c_state.fencing_epoch = next_epoch
-    region_a.fencing_epoch = next_epoch
-    region_b.fencing_epoch = next_epoch
+    source_entity.fencing_epoch = next_epoch
+    target_entity.fencing_epoch = next_epoch
     fencing_epoch_ctx.set(next_epoch)
 
     logger.info(
@@ -381,7 +436,7 @@ async def execute_failover_workflow(
         session,
         severity="action",
         subsystem="FENCING",
-        reason=f"Fencing epoch advanced to #{next_epoch}. Promoting Region B to primary writer.",
+        reason=f"Fencing epoch advanced to #{next_epoch}. Promoting {target_entity.name} ({target_entity.id}) to primary writer.",
         simulated_time_seconds=c_state.simulated_time_seconds,
         transition="FENCING_PRIMARY -> PROMOTING_STANDBY",
     )
@@ -389,21 +444,25 @@ async def execute_failover_workflow(
     # ---------------------------------------------------------
     # STEP 7: Promote the standby
     # ---------------------------------------------------------
-    logger.info(f"[PROMOTING_STANDBY] Granting write authority to Region B with epoch #{next_epoch}")
-    await regional_client.promote("region-b", next_epoch)
-    region_b.role = "ACTIVE"
-    region_b.accepts_writes = True
-    region_b.iops = 4800
-    region_a.role = "STANDBY"
+    logger.info(f"[PROMOTING_STANDBY] Granting write authority to {target_entity.name} ({target_entity.id}) with epoch #{next_epoch}")
+    promoted_ok = await regional_client.promote(target_entity.id, next_epoch)
+    if not promoted_ok:
+        target_entity.accepts_writes = False
+    else:
+        target_entity.role = "ACTIVE"
+        target_entity.accepts_writes = True
+        target_entity.iops = 4800
+        target_entity.is_fenced = False
+        source_entity.role = "STANDBY"
 
-    g6 = verify_no_dual_primary(region_a.accepts_writes, region_b.accepts_writes)
+    g6 = verify_no_dual_primary(source_entity.accepts_writes, target_entity.accepts_writes)
     gate_results.append(GateEvaluationResult(
         gate_name="Gate 6: Dual-Primary Safety Invariant",
-        passed=g6.passed,
-        reason=g6.reason,
+        passed=g6.passed and promoted_ok,
+        reason=g6.reason if (g6.passed and promoted_ok) else "Promotion failed or dual-primary invariant violated.",
         details=g6.details,
     ))
-    if not g6.passed:
+    if not g6.passed or not promoted_ok:
         metrics_tracker.record_failover_blocked("Gate 6: Dual-Primary Safety Invariant")
         logger.warning(
             f"[TRANSITION_BLOCKED] Step 7 dual-primary invariant violated: {g6.reason}",
@@ -429,32 +488,32 @@ async def execute_failover_workflow(
             previous_state=ControllerState.PROMOTING_STANDBY,
             current_state=ControllerState.FAILOVER_BLOCKED,
             fencing_epoch=next_epoch,
-            message="Failover blocked at Step 7 (Dual-Primary Invariant Violated).",
+            message="Failover blocked at Step 7 (Dual-Primary Invariant Violated)." if not g6.passed else "Failover blocked at Step 7 (Standby promotion failed).",
             blocked_reason=g6.reason,
             gate_results=gate_results,
         )
 
-    c_state.active_region = "region-b"
+    c_state.active_region = target_entity.id
 
     # ---------------------------------------------------------
     # STEP 8: Request gateway route update
     # ---------------------------------------------------------
     c_state.current_state = "ROUTE_UPDATING"
-    logger.info(f"[ROUTE_UPDATING] Pointing ingress gateway target to Region B (TTL={policy.route_propagation_sec}s)")
+    logger.info(f"[ROUTE_UPDATING] Pointing ingress gateway target to {target_entity.name} ({target_entity.id}) (TTL={policy.route_propagation_sec}s)")
     await log_audit_event(
         session,
         severity="action",
         subsystem="DNS",
-        reason="Requesting Gateway / DNS Anycast route update pointing to Region B.",
+        reason=f"Requesting Gateway / DNS Anycast route update pointing to {target_entity.name} ({target_entity.id}).",
         simulated_time_seconds=c_state.simulated_time_seconds,
         transition="PROMOTING_STANDBY -> ROUTE_UPDATING",
     )
 
-    await gateway_client.update_route("region-b", ttl=policy.route_propagation_sec, propagation_percent=100)
-    route.active_target = "region-b"
+    await gateway_client.update_route(target_entity.id, ttl=policy.route_propagation_sec, propagation_percent=100)
+    route.active_target = target_entity.id
     route.propagation_percent = 100
-    region_b.ingress_traffic_percent = 100
-    region_b.active_connections = 2450
+    target_entity.ingress_traffic_percent = 100
+    target_entity.active_connections = 2450
 
     # ---------------------------------------------------------
     # STEP 9: Verify the new route with a test request
@@ -478,7 +537,7 @@ async def execute_failover_workflow(
 
     g7 = verify_route_operational(
         active_target=route.active_target,
-        expected_target="region-b",
+        expected_target=target_entity.id,
         propagation_percent=route.propagation_percent,
         verification_status=route.verification_status,
         route_failure_injected=not route_healthy,
@@ -534,15 +593,15 @@ async def execute_failover_workflow(
     metrics_tracker.record_failover_success()
 
     logger.info(
-        f"[FAILOVER_COMPLETED] Transition {intent.id} complete across all 10 decision steps. Region B active primary [Epoch #{next_epoch}].",
-        extra={"transition_id": intent.id, "active_region": "region-b", "fencing_epoch": next_epoch}
+        f"[FAILOVER_COMPLETED] Transition {intent.id} complete across all 10 decision steps. {target_entity.name} ({target_entity.id}) active primary [Epoch #{next_epoch}].",
+        extra={"transition_id": intent.id, "active_region": target_entity.id, "fencing_epoch": next_epoch}
     )
 
     await log_audit_event(
         session,
         severity="success",
         subsystem="CONTROLLER",
-        reason="Failover complete: Region B (Singapore) promoted to PRIMARY. Route verified. Zero split-brain writes.",
+        reason=f"Failover complete: {target_entity.name} ({target_entity.id}) promoted to PRIMARY. Route verified. Zero split-brain writes.",
         simulated_time_seconds=c_state.simulated_time_seconds,
         transition="VERIFYING_ROUTE -> SECONDARY_ACTIVE",
     )

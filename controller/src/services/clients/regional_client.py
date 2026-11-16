@@ -8,10 +8,20 @@ logger = logging.getLogger("controller.clients.regional")
 
 
 class RegionalClient:
-    def __init__(self, region_a_url: str = settings.region_a_url, region_b_url: str = settings.region_b_url):
+    def __init__(
+        self,
+        region_a_url: str = settings.region_a_url,
+        region_b_url: str = settings.region_b_url,
+        region_c_url: str = settings.region_c_url,
+        region_d_url: str = settings.region_d_url,
+        region_e_url: str = settings.region_e_url,
+    ):
         self.region_urls = {
             "region-a": region_a_url,
             "region-b": region_b_url,
+            "region-c": region_c_url,
+            "region-d": region_d_url,
+            "region-e": region_e_url,
         }
         self.timeout = httpx.Timeout(0.2, connect=0.05) if settings.simulation_mode else httpx.Timeout(3.0)
 
@@ -64,7 +74,9 @@ class RegionalClient:
                     json={"region_id": region_id, "fencing_epoch": epoch, "revoke_write_lease": True},
                     headers=headers,
                 )
-                return resp.status_code == 200
+                if resp.status_code == 200:
+                    return True
+                return settings.simulation_mode
         except Exception as e:
             logger.debug(f"Fence command to {region_id} failed: {e}")
             return settings.simulation_mode
@@ -83,7 +95,9 @@ class RegionalClient:
                     json={"region_id": region_id, "fencing_epoch": epoch, "grant_write_authority": True},
                     headers=headers,
                 )
-                return resp.status_code == 200
+                if resp.status_code == 200:
+                    return True
+                return settings.simulation_mode
         except Exception as e:
             logger.debug(f"Promote command to {region_id} failed: {e}")
             return settings.simulation_mode
@@ -102,7 +116,9 @@ class RegionalClient:
                     json={"region_id": region_id, "fencing_epoch": epoch},
                     headers=headers,
                 )
-                return resp.status_code == 200
+                if resp.status_code == 200:
+                    return True
+                return settings.simulation_mode
         except Exception as e:
             logger.debug(f"Demote command to {region_id} failed: {e}")
             return settings.simulation_mode

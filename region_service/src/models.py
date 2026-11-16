@@ -56,6 +56,8 @@ class OutboxEventEntity(Base):
     record_key: Mapped[str] = mapped_column(String(255), nullable=False)
     operation: Mapped[str] = mapped_column(String(16), nullable=False)  # 'INSERT', 'UPDATE', 'DELETE'
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    source_region_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     fencing_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=101)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)

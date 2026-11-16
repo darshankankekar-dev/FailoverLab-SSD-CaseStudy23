@@ -1,6 +1,9 @@
 from typing import List, Optional
+import json
+import hashlib
 import logging
 from datetime import datetime, timezone
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from ..models import (
@@ -51,12 +54,16 @@ async def get_outbox_events(
     event_responses = [
         OutboxEventResponse(
             sequence_id=e.sequence_id,
+            sequence_number=e.sequence_id,
             event_id=e.event_id,
             record_key=e.record_key,
             operation=e.operation,
             payload=e.payload,
+            payload_hash=getattr(e, "payload_hash", None),
             version=e.version,
             fencing_epoch=e.fencing_epoch,
+            source_fencing_epoch=e.fencing_epoch,
+            source_region_id=getattr(e, "source_region_id", None),
             created_at=e.created_at,
             replicated=e.replicated,
         )
@@ -94,7 +101,11 @@ async def apply_replication_batch(
 ) -> ReplicationApplyResponse:
     """
     Applies incoming replication events into local tables.
-    Guarantees strict idempotency and deduplication via AppliedReplicationEventEntity.
+    Guarantees:
+    1. In-batch monotonic ordering.
+    2. Idempotent deduplication via AppliedReplicationEventEntity.
+    3. Rejection of out-of-order / regressive non-duplicate events.
+    4. End-to-end payload hash verification.
     """
     applied_count = 0
     skipped_duplicates = 0
@@ -102,8 +113,30 @@ async def apply_replication_batch(
 
     now = utc_now()
 
+    # 1. Enforce monotonic ordering within batch
+    last_seq_in_batch = -1
     for ev in events:
-        # 1. Deduplication check
+        seq = ev.sequence_number if ev.sequence_number is not None else ev.source_sequence_id
+        if last_seq_in_batch >= 0 and seq < last_seq_in_batch:
+            logger.warning(f"[REPLICATION_OUT_OF_ORDER] Event sequence decreased within batch: {seq} < {last_seq_in_batch}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Out-of-order event batch: sequence #{seq} arrived after #{last_seq_in_batch}."
+            )
+        last_seq_in_batch = seq
+
+    # 2. Get highest previously applied sequence for this source region
+    res_max_applied = await session.execute(
+        select(func.max(AppliedReplicationEventEntity.source_sequence_id)).where(
+            AppliedReplicationEventEntity.source_region == source_region
+        )
+    )
+    current_max_applied = res_max_applied.scalar() or 0
+
+    for ev in events:
+        seq = ev.sequence_number if ev.sequence_number is not None else ev.source_sequence_id
+
+        # 3. Deduplication check
         res_chk = await session.execute(
             select(AppliedReplicationEventEntity).where(
                 AppliedReplicationEventEntity.event_id == ev.event_id
@@ -111,10 +144,31 @@ async def apply_replication_batch(
         )
         if res_chk.scalar_one_or_none():
             skipped_duplicates += 1
-            highest_seq = max(highest_seq, ev.source_sequence_id)
+            highest_seq = max(highest_seq, seq)
             continue
 
-        # 2. Apply record mutation idempotently
+        # 4. Out-of-order rejection for non-duplicate events
+        if current_max_applied > 0 and seq < current_max_applied:
+            logger.warning(
+                f"[REPLICATION_OUT_OF_ORDER] Non-duplicate event #{seq} is lower than current checkpoint #{current_max_applied}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Out-of-order event rejected: sequence #{seq} is lower than current checkpoint #{current_max_applied}."
+            )
+
+        # 5. Integrity verification
+        if ev.payload_hash:
+            canonical_json = json.dumps(ev.payload, sort_keys=True)
+            computed_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+            if computed_hash != ev.payload_hash:
+                logger.warning(f"[PAYLOAD_CORRUPT] Event {ev.event_id} payload hash mismatch")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Payload corruption detected: expected {ev.payload_hash}, computed {computed_hash}."
+                )
+
+        # 6. Apply record mutation idempotently
         if ev.operation in ["INSERT", "UPDATE"]:
             res_rec = await session.execute(
                 select(RecordEntity).where(RecordEntity.key == ev.record_key)
@@ -123,7 +177,7 @@ async def apply_replication_batch(
             if rec:
                 rec.value = ev.payload
                 rec.version = ev.version
-                rec.fencing_epoch = ev.fencing_epoch
+                rec.fencing_epoch = ev.source_fencing_epoch or ev.fencing_epoch
                 rec.source_region = source_region
                 rec.updated_at = now
             else:
@@ -131,7 +185,7 @@ async def apply_replication_batch(
                     key=ev.record_key,
                     value=ev.payload,
                     version=ev.version,
-                    fencing_epoch=ev.fencing_epoch,
+                    fencing_epoch=ev.source_fencing_epoch or ev.fencing_epoch,
                     source_region=source_region,
                     created_at=now,
                     updated_at=now,
@@ -146,18 +200,19 @@ async def apply_replication_batch(
             if rec:
                 await session.delete(rec)
 
-        # 3. Record applied event for duplicate prevention
+        # 7. Record applied event for duplicate prevention
         applied_marker = AppliedReplicationEventEntity(
             event_id=ev.event_id,
-            source_sequence_id=ev.source_sequence_id,
+            source_sequence_id=seq,
             record_key=ev.record_key,
             source_region=source_region,
             applied_at=now,
-            fencing_epoch=ev.fencing_epoch,
+            fencing_epoch=ev.source_fencing_epoch or ev.fencing_epoch,
         )
         session.add(applied_marker)
 
-        highest_seq = max(highest_seq, ev.source_sequence_id)
+        highest_seq = max(highest_seq, seq)
+        current_max_applied = max(current_max_applied, seq)
         applied_count += 1
 
     await session.commit()

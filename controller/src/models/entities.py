@@ -33,6 +33,8 @@ class RegionEntity(Base):
     iops: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     fencing_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=101)
     is_fenced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    applied_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    replication_lag_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)
 
 

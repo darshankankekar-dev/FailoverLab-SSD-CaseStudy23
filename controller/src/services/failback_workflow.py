@@ -34,10 +34,11 @@ async def execute_failback_workflow(
     session: AsyncSession,
     operator_id: str,
     confirmation: bool,
+    target_region: str = "region-a",
     reason: str = "Guarded manual failback to Region A",
 ) -> TransitionResponse:
     """
-    Executes controlled, guarded failback to Region A after data reconciliation.
+    Executes controlled, guarded failback to primary (default Region A) after data reconciliation.
     Guarantees that recovery is deliberate and safe.
     """
     res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
@@ -46,11 +47,18 @@ async def execute_failback_workflow(
     res_policy = await session.execute(select(PolicyEntity).where(PolicyEntity.id == 1))
     policy = res_policy.scalar_one()
 
-    res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
-    region_a = res_a.scalar_one()
+    res_all = await session.execute(select(RegionEntity))
+    regions_map = {r.id: r for r in res_all.scalars().all()}
 
-    res_b = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-b"))
-    region_b = res_b.scalar_one()
+    target_region_id = target_region or "region-a"
+    target_entity = regions_map.get(target_region_id) or regions_map.get("region-a")
+
+    current_active_id = c_state.active_region or "region-b"
+    active_entity = regions_map.get(current_active_id) or regions_map.get("region-b")
+
+    # Maintain references for backward compatibility
+    region_a = target_entity
+    region_b = active_entity
 
     res_rep = await session.execute(select(ReplicationEntity).where(ReplicationEntity.id == 1))
     replication = res_rep.scalar_one()
@@ -144,31 +152,31 @@ async def execute_failback_workflow(
         transition=f"{prev_state} -> FAILBACK_IN_PROGRESS",
     )
 
-    # 5. Fence Region B
-    await regional_client.fence("region-b", c_state.fencing_epoch)
-    region_b.accepts_writes = False
-    region_b.is_fenced = True
-    region_b.role = "STANDBY"
-    region_b.ingress_traffic_percent = 0
-    region_b.iops = 120
+    # 5. Fence previous active primary
+    await regional_client.fence(active_entity.id, c_state.fencing_epoch)
+    active_entity.accepts_writes = False
+    active_entity.is_fenced = True
+    active_entity.role = "STANDBY"
+    active_entity.ingress_traffic_percent = 0
+    active_entity.iops = 120
 
     # 6. Monotonically advance epoch
     next_epoch = advance_epoch(c_state.fencing_epoch)
     c_state.fencing_epoch = next_epoch
-    region_a.fencing_epoch = next_epoch
-    region_b.fencing_epoch = next_epoch
+    target_entity.fencing_epoch = next_epoch
+    active_entity.fencing_epoch = next_epoch
 
-    # 7. Promote Region A
-    await regional_client.promote("region-a", next_epoch)
-    region_a.role = "ACTIVE"
-    region_a.accepts_writes = True
-    region_a.is_fenced = False
-    region_a.ingress_traffic_percent = 100
-    region_a.iops = 4800
-    region_a.active_connections = 2450
+    # 7. Promote target region
+    await regional_client.promote(target_entity.id, next_epoch)
+    target_entity.role = "ACTIVE"
+    target_entity.accepts_writes = True
+    target_entity.is_fenced = False
+    target_entity.ingress_traffic_percent = 100
+    target_entity.iops = 4800
+    target_entity.active_connections = 2450
 
     # Verify dual primary invariant
-    dual_check = verify_no_dual_primary(region_a.accepts_writes, region_b.accepts_writes)
+    dual_check = verify_no_dual_primary(target_entity.accepts_writes, active_entity.accepts_writes)
     if not dual_check.passed:
         c_state.current_state = "FAILOVER_BLOCKED"
         c_state.blocked_reason = dual_check.reason
@@ -183,11 +191,11 @@ async def execute_failback_workflow(
             gate_results=gate_results,
         )
 
-    # 8. Repoint gateway back to Region A
-    await gateway_client.update_route("region-a", ttl=policy.route_propagation_sec, propagation_percent=100)
-    route.active_target = "region-a"
+    # 8. Repoint gateway back to target region
+    await gateway_client.update_route(target_entity.id, ttl=policy.route_propagation_sec, propagation_percent=100)
+    route.active_target = target_entity.id
     route.propagation_percent = 100
-    c_state.active_region = "region-a"
+    c_state.active_region = target_entity.id
 
     # 9. Verify route
     probe_result = await gateway_client.probe_route()
@@ -211,7 +219,7 @@ async def execute_failback_workflow(
         session,
         severity="success",
         subsystem="CONTROLLER",
-        reason=f"Failback complete: Region A restored to ACTIVE [Epoch #{next_epoch}]. Region B in STANDBY replica. Nominal operation resumed.",
+        reason=f"Failback complete: {target_entity.name} restored to ACTIVE [Epoch #{next_epoch}]. {active_entity.name} in STANDBY replica. Nominal operation resumed.",
         simulated_time_seconds=c_state.simulated_time_seconds,
         transition="FAILBACK_IN_PROGRESS -> HEALTHY",
     )
