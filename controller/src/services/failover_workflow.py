@@ -33,7 +33,7 @@ from ..domain import (
     CandidateEvaluation,
 )
 from .audit_service import log_audit_event
-from .clients import regional_client, gateway_client
+from .clients import regional_client, gateway_client, replication_client
 from .metrics_tracker import metrics_tracker
 from ..logging_config import transition_id_ctx, fencing_epoch_ctx, region_id_ctx
 
@@ -222,13 +222,37 @@ async def execute_failover_workflow(
     # ---------------------------------------------------------
     # STEP 3 & STEP 4: Candidate Selection, Standby Readiness & Lag Policy
     # ---------------------------------------------------------
-    # Resolve effective lags per region (combining DB records with runtime overrides)
+    # Obtain live per-destination replication telemetry from replication worker
+    worker_status = await replication_client.get_status()
+    worker_destinations = (worker_status or {}).get("destinations", {})
+
     effective_lags = dict(regional_lags or {})
+    effective_sequences = dict(regional_sequences or {})
+
     for r_id, r_ent in regions_map.items():
+        if r_id == source_entity.id:
+            continue
+        dest_telemetry = worker_destinations.get(r_id)
+        db_lag = getattr(r_ent, "replication_lag_seconds", None)
+        db_seq = getattr(r_ent, "applied_sequence", None)
+
         if r_id not in effective_lags:
-            effective_lags[r_id] = getattr(r_ent, "replication_lag_seconds", replication.lag_seconds)
-            if replication.status == "DEGRADED" and getattr(r_ent, "replication_lag_seconds", 0.8) == 0.8:
+            if db_lag is not None and db_lag != 0.8:
+                effective_lags[r_id] = db_lag
+            elif replication.status == "DEGRADED" and replication.lag_seconds > policy.acceptable_replication_lag_sec:
                 effective_lags[r_id] = replication.lag_seconds
+            elif dest_telemetry and dest_telemetry.get("time_lag_seconds") is not None:
+                effective_lags[r_id] = float(dest_telemetry["time_lag_seconds"])
+            else:
+                effective_lags[r_id] = db_lag if db_lag is not None else replication.lag_seconds
+
+        if r_id not in effective_sequences:
+            if db_seq is not None and db_seq > 0:
+                effective_sequences[r_id] = db_seq
+            elif dest_telemetry and dest_telemetry.get("applied_sequence") is not None:
+                effective_sequences[r_id] = int(dest_telemetry["applied_sequence"])
+            else:
+                effective_sequences[r_id] = db_seq if db_seq is not None else 0
 
     selected_candidate, candidate_evals, selection_summary = select_best_standby_candidate(
         regions=list(regions_map.values()),
@@ -236,7 +260,7 @@ async def execute_failover_workflow(
         acceptable_lag_sec=policy.acceptable_replication_lag_sec,
         preferred_target=target_norm,
         regional_lags=effective_lags,
-        regional_sequences=regional_sequences,
+        regional_sequences=effective_sequences,
         regional_latencies=regional_latencies,
     )
 

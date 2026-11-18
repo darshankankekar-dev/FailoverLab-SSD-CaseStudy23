@@ -68,15 +68,15 @@ export const FiveRegionsCards: React.FC<FiveRegionsCardsProps> = ({
           const isFenced = reg?.is_fenced ?? false;
           const acceptsWrites = isCurrentActive && !isFenced && health === 'HEALTHY';
 
-          // Latency: Measured vs Simulated
-          const measuredLat = measuredLatencies[rid] ?? (isCurrentActive ? 18.4 : undefined);
+          // Latency: Measured vs Simulated (do not fabricate fallback 18.4ms)
+          const measuredLat = measuredLatencies[rid];
           const simulatedWan = meta.nominalWanMs;
 
-          // Replication sequence & lag
-          const appliedSeq = reg?.applied_sequence ?? (isCurrentActive ? 1050 : (replicationDestinations[rid]?.applied_sequence ?? 1050));
+          // Replication sequence & lag from live telemetry (do not fabricate defaults)
+          const appliedSeq = reg?.applied_sequence ?? replicationDestinations[rid]?.applied_sequence;
           const lagSec = isCurrentActive
             ? 0.0
-            : (reg?.replication_lag_seconds ?? replicationDestinations[rid]?.lag_seconds ?? 0.8);
+            : (reg?.replication_lag_seconds ?? replicationDestinations[rid]?.lag_seconds ?? replicationDestinations[rid]?.time_lag_seconds);
 
           const healthyServers = reg?.app_servers_healthy ?? (health === 'DOWN' ? 0 : 8);
           const totalServers = reg?.app_servers_total ?? 8;
@@ -185,19 +185,31 @@ export const FiveRegionsCards: React.FC<FiveRegionsCardsProps> = ({
                 <div className="region-metric-row">
                   <span className="region-metric-label">Applied Sequence:</span>
                   <span className="region-metric-val font-mono text-bright">
-                    seq-{appliedSeq}
+                    {appliedSeq !== undefined && appliedSeq !== null ? (
+                      `seq-${appliedSeq}`
+                    ) : (
+                      <span className="text-muted italic">Pending</span>
+                    )}
                   </span>
                 </div>
 
                 {/* Replication Lag */}
                 <div className="region-metric-row">
                   <span className="region-metric-label">Replication Lag:</span>
-                  <span
-                    className={`region-metric-val ${
-                      lagSec > 5.0 ? 'text-danger font-bold' : 'text-flow'
-                    }`}
-                  >
-                    {isCurrentActive ? '0.0s (Source)' : `${lagSec.toFixed(2)}s`}
+                  <span className="region-metric-val">
+                    {isCurrentActive ? (
+                      <span className="text-flow font-mono">0.0s (Source)</span>
+                    ) : lagSec !== undefined && lagSec !== null ? (
+                      <span
+                        className={
+                          lagSec > 5.0 ? 'text-danger font-bold font-mono' : 'text-flow font-mono'
+                        }
+                      >
+                        {lagSec.toFixed(2)}s
+                      </span>
+                    ) : (
+                      <span className="text-muted italic">Pending</span>
+                    )}
                   </span>
                 </div>
 

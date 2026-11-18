@@ -13,8 +13,9 @@ import './TrafficLab.css';
 
 export const TrafficLabView: React.FC = () => {
   const [controllerState, setControllerState] = useState<ControllerStateDto | null>(null);
+  const [measuredLatencies, setMeasuredLatencies] = useState<Record<string, number>>({});
   const [isBackendConnected, setIsBackendConnected] = useState<boolean>(true);
-  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(() => new Date());
 
   const refreshState = useCallback(async () => {
     try {
@@ -28,6 +29,19 @@ export const TrafficLabView: React.FC = () => {
       }
     } catch {
       setIsBackendConnected(false);
+    }
+
+    // Attempt to retrieve real measured latencies from Gateway
+    try {
+      const routeRes = await fetch('/api/v1/route');
+      if (routeRes.ok) {
+        const routeData = await routeRes.json();
+        if (routeData.regional_measured_latency) {
+          setMeasuredLatencies(routeData.regional_measured_latency);
+        }
+      }
+    } catch {
+      // Gateway probe pending or offline
     }
   }, []);
 
@@ -104,10 +118,10 @@ export const TrafficLabView: React.FC = () => {
       </div>
 
       {/* Section 1: Five Regional Topology Cards */}
-      <FiveRegionsCards controllerState={controllerState} />
+      <FiveRegionsCards controllerState={controllerState} measuredLatencies={measuredLatencies} />
 
       {/* Section 2: Regional Comparison Table */}
-      <RegionalComparisonTable controllerState={controllerState} />
+      <RegionalComparisonTable controllerState={controllerState} measuredLatencies={measuredLatencies} />
 
       {/* Section 3: 2-Column Split: Rate Limiter Controls & Load Generator */}
       <div className="traffic-two-col">

@@ -46,7 +46,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           setLiveStock(stock);
           setStockMetadata(metadata);
         }
-      } catch (err) {
+      } catch {
         // Fallback to catalog cached stock
         if (isMounted) setLiveStock(product.stock);
       } finally {

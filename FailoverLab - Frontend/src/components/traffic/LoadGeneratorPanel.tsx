@@ -79,23 +79,30 @@ export const LoadGeneratorPanel: React.FC = () => {
       let body: string | undefined = undefined;
 
       if (requestType === 'product_detail') {
-        url = '/api/ecommerce/products/prod-001';
+        url = '/api/ecommerce/products/prod-laptop-01';
       } else if (requestType === 'order_create') {
         url = '/api/ecommerce/orders';
         method = 'POST';
         body = JSON.stringify({
-          customer_id: `cust-loadgen-${i}`,
-          customer_region: clientRegion,
-          items: [{ product_id: 'prod-001', quantity: 1 }],
-          fencing_epoch: 101,
+          product_id: 'prod-laptop-01',
+          quantity: 1,
+          items: [{ product_id: 'prod-laptop-01', quantity: 1 }],
+          customer_name: `Load Test Customer ${i}`,
+          customer_email: `loadgen-${Date.now()}-${i}@example.com`,
+          shipping_address: '100 Gateway Blvd, Cloud Zone',
+          client_region: clientRegion,
         });
       }
 
       const headers: Record<string, string> = {
         'X-Client-Region': clientRegion,
         'X-Client-ID': 'load-generator-harness',
-        'X-Request-ID': `burst-${Date.now().toString(36)}-${i}`,
+        'X-Request-ID': `burst-${Date.now().toString(36)}-${i}-${Math.random().toString(36).substring(2, 7)}`,
       };
+      if (requestType === 'order_create') {
+        // Generate a fresh, unique idempotency key for each logically distinct order request
+        headers['Idempotency-Key'] = `idem-load-${Date.now().toString(36)}-${i}-${Math.random().toString(36).substring(2, 9)}`;
+      }
       if (body) {
         headers['Content-Type'] = 'application/json';
       }

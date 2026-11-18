@@ -168,12 +168,9 @@ async def apply_replication_batch(
                     detail=f"Payload corruption detected: expected {ev.payload_hash}, computed {computed_hash}."
                 )
 
-        # 6. Apply record mutation idempotently
+        # 6. Apply record mutation idempotently (checks identity map & flushes to prevent duplicate key in same batch)
         if ev.operation in ["INSERT", "UPDATE"]:
-            res_rec = await session.execute(
-                select(RecordEntity).where(RecordEntity.key == ev.record_key)
-            )
-            rec = res_rec.scalar_one_or_none()
+            rec = await session.get(RecordEntity, ev.record_key)
             if rec:
                 rec.value = ev.payload
                 rec.version = ev.version
@@ -191,25 +188,27 @@ async def apply_replication_batch(
                     updated_at=now,
                 )
                 session.add(rec)
+            await session.flush()
 
         elif ev.operation == "DELETE":
-            res_rec = await session.execute(
-                select(RecordEntity).where(RecordEntity.key == ev.record_key)
-            )
-            rec = res_rec.scalar_one_or_none()
+            rec = await session.get(RecordEntity, ev.record_key)
             if rec:
                 await session.delete(rec)
+            await session.flush()
 
         # 7. Record applied event for duplicate prevention
-        applied_marker = AppliedReplicationEventEntity(
-            event_id=ev.event_id,
-            source_sequence_id=seq,
-            record_key=ev.record_key,
-            source_region=source_region,
-            applied_at=now,
-            fencing_epoch=ev.source_fencing_epoch or ev.fencing_epoch,
-        )
-        session.add(applied_marker)
+        applied_marker = await session.get(AppliedReplicationEventEntity, ev.event_id)
+        if not applied_marker:
+            applied_marker = AppliedReplicationEventEntity(
+                event_id=ev.event_id,
+                source_sequence_id=seq,
+                record_key=ev.record_key,
+                source_region=source_region,
+                applied_at=now,
+                fencing_epoch=ev.source_fencing_epoch or ev.fencing_epoch,
+            )
+            session.add(applied_marker)
+            await session.flush()
 
         highest_seq = max(highest_seq, seq)
         current_max_applied = max(current_max_applied, seq)

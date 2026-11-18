@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import time
 import httpx
 from unittest.mock import AsyncMock
 import gateway.src.main as gateway_module
@@ -150,14 +151,15 @@ async def test_workflow_b_token_bucket_burst_and_refill(async_client):
 
     try:
         traffic_coordinator.set_mode(LimiterMode.TOKEN_BUCKET)
+        # Use low refill during the burst so execution overhead across async loop does not refill tokens early
         traffic_coordinator.update_config(
             token_capacity=10.0,
-            token_refill_rate=2.0,  # 2 tokens/second (as per specification)
+            token_refill_rate=0.001,
         )
         traffic_coordinator.reset_all()
 
         results = []
-        for i in range(15):
+        for _ in range(15):
             res = await async_client.get(
                 "/api/ecommerce/products",
                 headers={"X-Client-Region": "india"},
@@ -176,8 +178,10 @@ async def test_workflow_b_token_bucket_burst_and_refill(async_client):
             assert "Rate limit exceeded" in (r.json().get("error") or r.json().get("detail", ""))
             assert r.headers["X-RateLimit-Mode"] == "TOKEN_BUCKET"
 
-        # Wait 600ms for refill (at 2 tokens/sec, 0.6s gives >1 token)
-        await asyncio.sleep(0.6)
+        # Now configure refill rate = 2.0 tokens/sec
+        traffic_coordinator.update_config(token_refill_rate=2.0)
+        bucket = await traffic_coordinator.token_limiter._get_bucket("india")
+        bucket.last_refill = time.monotonic() - 0.6  # 0.6s at 2 tokens/sec gives >1 token
 
         # Send 1 request after refill
         refilled_res = await async_client.get(

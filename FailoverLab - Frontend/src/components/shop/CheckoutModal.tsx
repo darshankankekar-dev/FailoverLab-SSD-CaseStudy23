@@ -34,8 +34,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   selectedRegion,
   onOrderSuccess,
 }) => {
-  if (!isOpen) return null;
-
   const currentRegion = CLIENT_REGIONS.find((r) => r.id === selectedRegion) || CLIENT_REGIONS[0];
 
   const getDefaultAddress = (regionId: string) => {
@@ -116,6 +114,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       setIsSubmitting(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

@@ -14,6 +14,7 @@ from ...models import (
 )
 from ...schemas import StateResponse
 from ...services import log_audit_event, get_full_state
+from ...services.clients import replication_client
 from ...domain.registry import REGION_REGISTRY
 
 router = APIRouter(prefix="/chaos", tags=["Internal Chaos"])
@@ -110,6 +111,9 @@ async def inject_replication_lag(
     rep.lag_seconds = lag_seconds
     rep.lag_ms = int(lag_seconds * 1000)
 
+    # Forward to replication worker
+    await replication_client.set_delay(lag_seconds)
+
     res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
     c_state = res_state.scalar_one()
 
@@ -178,6 +182,10 @@ async def inject_regional_lag(
     if reg:
         reg.replication_lag_seconds = lag_seconds
         await session.commit()
+
+    # Forward to replication worker selectively
+    await replication_client.set_delay(lag_seconds, destination=region_id)
+
     return await get_full_state(session)
 
 

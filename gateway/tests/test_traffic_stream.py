@@ -71,3 +71,40 @@ async def test_traffic_public_config_and_reset(async_client):
     assert reset_res.status_code == 200
     hist_res = await async_client.get("/api/v1/traffic/history")
     assert len(hist_res.json()["events"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_sse_traffic_events_stream_and_cancellation(async_client):
+    """Verifies that /api/v1/traffic/events streams SSE events and unsubscribes cleanly on cancellation."""
+    initial_subscribers = len(traffic_coordinator.subscribers)
+
+    async def consume_stream():
+        async with async_client.stream("GET", "/api/v1/traffic/events") as response:
+            assert response.status_code == 200
+            async for line in response.aiter_lines():
+                if "connect" in line:
+                    await asyncio.sleep(10.0)  # Hold stream open
+        return False
+
+    task = asyncio.create_task(consume_stream())
+
+    # Wait for subscriber to be registered by the gateway
+    for _ in range(20):
+        if len(traffic_coordinator.subscribers) > initial_subscribers:
+            break
+        await asyncio.sleep(0.05)
+
+    assert len(traffic_coordinator.subscribers) == initial_subscribers + 1
+
+    # Cancel the client stream
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
+
+    # Verify subscriber is cleanly unsubscribed
+    await asyncio.sleep(0.05)
+    assert len(traffic_coordinator.subscribers) == initial_subscribers
+
+

@@ -26,8 +26,12 @@ class DestinationReplicationModel(BaseModel):
     lag_ms: int = 800
     applied_sequence: int = 0
     source_highest_sequence: int = 0
+    sequence_lag: int = 0
+    time_lag_seconds: float = 0.8
     retry_count: int = 0
     consecutive_failures: int = 0
+    is_simulated_lag: bool = False
+    injected_delay_sec: float = 0.0
     last_error: Optional[str] = None
 
 

@@ -70,7 +70,7 @@ export const OnlineStoreView: React.FC<OnlineStoreViewProps> = ({ onNavigateToCo
   useEffect(() => {
     try {
       localStorage.setItem('failoverlab_shop_cart', JSON.stringify(cart));
-    } catch (e) {
+    } catch {
       // Storage unavailable
     }
   }, [cart]);

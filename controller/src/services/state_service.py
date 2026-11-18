@@ -28,6 +28,7 @@ from ..schemas import (
 from ..schemas.state import TruthfulFailoverMetricsModel
 from .metrics_tracker import metrics_tracker
 from ..domain.registry import get_region_definition
+from .clients import replication_client
 
 
 async def get_full_state(session: AsyncSession) -> StateResponse:
@@ -41,9 +42,34 @@ async def get_full_state(session: AsyncSession) -> StateResponse:
     res_all_regions = await session.execute(select(RegionEntity).order_by(RegionEntity.id))
     region_entities = {r.id: r for r in res_all_regions.scalars().all()}
 
+    # Query live replication worker telemetry if reachable
+    worker_status = await replication_client.get_status()
+    worker_destinations = (worker_status or {}).get("destinations", {})
+    worker_source_seq = (worker_status or {}).get("last_replicated_sequence_id", 0)
+
     def to_region_resp(entity: RegionEntity) -> RegionResponse:
         reg_def = get_region_definition(entity.id)
         latency = reg_def.nominal_latency_ms if reg_def else 30
+
+        is_active = (entity.id == c_state.active_region)
+        dest_telemetry = worker_destinations.get(entity.id)
+
+        if is_active:
+            applied_seq = worker_source_seq if worker_source_seq > 0 else getattr(entity, "applied_sequence", 0)
+            lag_sec = 0.0
+        elif dest_telemetry:
+            applied_seq = dest_telemetry.get("applied_sequence", getattr(entity, "applied_sequence", 0))
+            lag_sec = dest_telemetry.get("time_lag_seconds", getattr(entity, "replication_lag_seconds", 0.8))
+        else:
+            applied_seq = getattr(entity, "applied_sequence", 0)
+            lag_sec = getattr(entity, "replication_lag_seconds", 0.8)
+
+        # Allow manual database override for chaos experiments
+        if not is_active and getattr(entity, "replication_lag_seconds", 0.8) != 0.8:
+            lag_sec = entity.replication_lag_seconds
+        if not is_active and getattr(entity, "applied_sequence", 0) > 0:
+            applied_seq = entity.applied_sequence
+
         return RegionResponse(
             id=RegionId(entity.id),
             name=entity.name,
@@ -60,8 +86,8 @@ async def get_full_state(session: AsyncSession) -> StateResponse:
             iops=entity.iops,
             fencing_epoch=entity.fencing_epoch,
             is_fenced=entity.is_fenced,
-            applied_sequence=getattr(entity, "applied_sequence", 0),
-            replication_lag_seconds=getattr(entity, "replication_lag_seconds", 0.8),
+            applied_sequence=applied_seq,
+            replication_lag_seconds=lag_sec,
             latency_ms=latency,
         )
 
@@ -149,15 +175,52 @@ async def get_full_state(session: AsyncSession) -> StateResponse:
                     region_id=r_id,
                     status=(
                         "DEGRADED"
-                        if getattr(region_entities[r_id], "replication_lag_seconds", replication.lag_seconds) > policy.acceptable_replication_lag_sec
-                        else (replication.status if replication.status != "STREAMING" else "STREAMING")
+                        if (
+                            getattr(region_entities[r_id], "replication_lag_seconds", 0.8) > policy.acceptable_replication_lag_sec
+                            or (worker_destinations.get(r_id, {}).get("time_lag_seconds", 0.8) > policy.acceptable_replication_lag_sec)
+                        )
+                        else (
+                            worker_destinations.get(r_id, {}).get("status")
+                            or (replication.status if replication.status != "STREAMING" else "STREAMING")
+                        )
                     ),
-                    lag_seconds=getattr(region_entities[r_id], "replication_lag_seconds", replication.lag_seconds),
-                    lag_ms=int(getattr(region_entities[r_id], "replication_lag_seconds", replication.lag_seconds) * 1000),
-                    applied_sequence=getattr(region_entities[r_id], "applied_sequence", 0),
-                    source_highest_sequence=getattr(region_entities[r_id], "applied_sequence", 0),
-                    retry_count=0,
-                    consecutive_failures=0,
+                    lag_seconds=round(
+                        getattr(region_entities[r_id], "replication_lag_seconds")
+                        if getattr(region_entities[r_id], "replication_lag_seconds", 0.8) != 0.8
+                        else float(worker_destinations.get(r_id, {}).get("time_lag_seconds", replication.lag_seconds)),
+                        2,
+                    ),
+                    lag_ms=int(
+                        (
+                            getattr(region_entities[r_id], "replication_lag_seconds")
+                            if getattr(region_entities[r_id], "replication_lag_seconds", 0.8) != 0.8
+                            else float(worker_destinations.get(r_id, {}).get("time_lag_seconds", replication.lag_seconds))
+                        ) * 1000
+                    ),
+                    applied_sequence=(
+                        getattr(region_entities[r_id], "applied_sequence")
+                        if getattr(region_entities[r_id], "applied_sequence", 0) > 0
+                        else int(worker_destinations.get(r_id, {}).get("applied_sequence", 0))
+                    ),
+                    source_highest_sequence=int(
+                        worker_destinations.get(r_id, {}).get("source_sequence", worker_source_seq)
+                    ),
+                    sequence_lag=int(
+                        worker_destinations.get(r_id, {}).get("sequence_lag", 0)
+                    ),
+                    time_lag_seconds=round(
+                        getattr(region_entities[r_id], "replication_lag_seconds")
+                        if getattr(region_entities[r_id], "replication_lag_seconds", 0.8) != 0.8
+                        else float(worker_destinations.get(r_id, {}).get("time_lag_seconds", replication.lag_seconds)),
+                        2,
+                    ),
+                    retry_count=int(worker_destinations.get(r_id, {}).get("retry_count", 0)),
+                    consecutive_failures=int(worker_destinations.get(r_id, {}).get("consecutive_failures", 0)),
+                    is_simulated_lag=bool(
+                        worker_destinations.get(r_id, {}).get("is_simulated_lag", False)
+                        or getattr(region_entities[r_id], "replication_lag_seconds", 0.8) != 0.8
+                    ),
+                    injected_delay_sec=float(worker_destinations.get(r_id, {}).get("injected_delay_sec", 0.0)),
                 )
                 for r_id in region_entities.keys()
                 if r_id != c_state.active_region

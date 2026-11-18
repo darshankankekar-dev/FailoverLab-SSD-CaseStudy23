@@ -54,8 +54,12 @@ export interface DestinationReplicationDto {
   lag_ms: number;
   applied_sequence: number;
   source_highest_sequence: number;
+  sequence_lag?: number;
+  time_lag_seconds?: number;
   retry_count: number;
   consecutive_failures: number;
+  is_simulated_lag?: boolean;
+  injected_delay_sec?: number;
 }
 
 export interface ReplicationStateDto {

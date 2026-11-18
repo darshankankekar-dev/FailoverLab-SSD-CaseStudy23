@@ -53,8 +53,8 @@ export const RegionalComparisonTable: React.FC<RegionalComparisonTableProps> = (
       return { eligible: false, reason: 'Region is Fenced' };
     }
 
-    const lag = reg?.replication_lag_seconds ?? replicationDestinations[rid]?.lag_seconds ?? 0.8;
-    if (lag > acceptableLag) {
+    const lag = reg?.replication_lag_seconds ?? replicationDestinations[rid]?.lag_seconds ?? replicationDestinations[rid]?.time_lag_seconds;
+    if (lag !== undefined && lag !== null && lag > acceptableLag) {
       return { eligible: false, reason: `Replication lag (${lag.toFixed(1)}s > ${acceptableLag.toFixed(1)}s)` };
     }
 
@@ -99,11 +99,11 @@ export const RegionalComparisonTable: React.FC<RegionalComparisonTableProps> = (
               const reg = regionsMap[rid];
               const isCurrentActive = activeRegion === rid;
               const health = reg?.health || 'HEALTHY';
-              const measured = measuredLatencies[rid] ?? (isCurrentActive ? 18.4 : undefined);
+              const measured = measuredLatencies[rid];
               const lag = isCurrentActive
                 ? 0.0
-                : (reg?.replication_lag_seconds ?? replicationDestinations[rid]?.lag_seconds ?? 0.8);
-              const appliedSeq = reg?.applied_sequence ?? (isCurrentActive ? 1050 : (replicationDestinations[rid]?.applied_sequence ?? 1050));
+                : (reg?.replication_lag_seconds ?? replicationDestinations[rid]?.lag_seconds ?? replicationDestinations[rid]?.time_lag_seconds);
+              const appliedSeq = reg?.applied_sequence ?? replicationDestinations[rid]?.applied_sequence;
               const acceptsWrites = isCurrentActive && !reg?.is_fenced && health === 'HEALTHY';
               const candidate = evaluateCandidateEligibility(rid);
 
@@ -153,23 +153,25 @@ export const RegionalComparisonTable: React.FC<RegionalComparisonTableProps> = (
 
                   {/* Measured RTT */}
                   <td className="font-mono">
-                    {measured !== undefined ? (
+                    {measured !== undefined && measured !== null ? (
                       <span className="text-flow font-semibold">
                         {measured.toFixed(1)} ms
                       </span>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted italic">Pending probe</span>
                     )}
                   </td>
 
                   {/* Simulated WAN */}
-                  <td className="font-mono text-muted">{info.nominalWan} ms</td>
+                  <td className="font-mono text-muted">
+                    {info.nominalWan} ms <span className="badge-tag-sm tag-simulated">[SIMULATED]</span>
+                  </td>
 
                   {/* Replication Lag */}
                   <td className="font-mono">
                     {isCurrentActive ? (
                       <span className="text-muted font-mono">0.0s (Source)</span>
-                    ) : (
+                    ) : lag !== undefined && lag !== null ? (
                       <span
                         className={
                           lag > acceptableLag ? 'text-danger font-bold' : 'text-flow font-semibold'
@@ -177,11 +179,19 @@ export const RegionalComparisonTable: React.FC<RegionalComparisonTableProps> = (
                       >
                         {lag.toFixed(2)}s
                       </span>
+                    ) : (
+                      <span className="text-muted italic">Pending</span>
                     )}
                   </td>
 
                   {/* Applied Sequence */}
-                  <td className="font-mono text-bright">seq-{appliedSeq}</td>
+                  <td className="font-mono text-bright">
+                    {appliedSeq !== undefined && appliedSeq !== null ? (
+                      `seq-${appliedSeq}`
+                    ) : (
+                      <span className="text-muted italic">Pending</span>
+                    )}
+                  </td>
 
                   {/* Write Eligibility */}
                   <td>

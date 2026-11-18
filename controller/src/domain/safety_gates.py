@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, NamedTuple
+from typing import List, Dict, Any, NamedTuple, Optional
 
 
 class GateResult(NamedTuple):
@@ -153,27 +153,48 @@ def verify_route_operational(
 
 
 def check_failback_readiness(
-    region_a_health: str,
-    replication_status: str,
-    lag_seconds: float,
-    acceptable_lag_sec: float,
+    target_health: str = "HEALTHY",
+    replication_status: str = "SYNCED",
+    lag_seconds: float = 0.8,
+    acceptable_lag_sec: float = 5.0,
+    applied_sequence: Optional[int] = None,
+    source_sequence: Optional[int] = None,
+    target_name: str = "Region A",
+    region_a_health: Optional[str] = None,
 ) -> GateResult:
     """Gate 8: Guarded Failback Readiness Gate."""
-    if region_a_health != "HEALTHY":
+    health = region_a_health if region_a_health is not None else target_health
+    target_desc = "Original primary (Region A)" if target_name in ["Region A", "Mumbai", "region-a"] else f"Target recovery region ({target_name})"
+
+    if health != "HEALTHY":
         return GateResult(
             passed=False,
-            reason=f"Failback blocked: Original primary (Region A) is still {region_a_health}.",
-            details={"health": region_a_health},
+            reason=f"Failback blocked: {target_desc} is still {health}.",
+            details={"health": health, "target": target_name},
         )
-    if replication_status != "SYNCED" and lag_seconds > acceptable_lag_sec:
+    if lag_seconds > acceptable_lag_sec:
         return GateResult(
             passed=False,
-            reason=f"Failback blocked: Reverse replication lag ({lag_seconds:.1f}s) has not yet reconciled with active secondary.",
-            details={"status": replication_status, "lag_seconds": lag_seconds, "acceptable_lag": acceptable_lag_sec},
+            reason=f"Failback blocked: Reverse replication lag ({lag_seconds:.1f}s) has not yet reconciled with active secondary for {target_desc}.",
+            details={"status": replication_status, "lag_seconds": lag_seconds, "acceptable_lag": acceptable_lag_sec, "target": target_name},
         )
+    if replication_status not in ["SYNCED", "STREAMING"]:
+        return GateResult(
+            passed=False,
+            reason=f"Failback blocked: Reverse replication status ({replication_status}) has not yet reconciled with active secondary for {target_desc}.",
+            details={"status": replication_status, "lag_seconds": lag_seconds, "acceptable_lag": acceptable_lag_sec, "target": target_name},
+        )
+    if source_sequence is not None and applied_sequence is not None:
+        seq_gap = max(0, source_sequence - applied_sequence)
+        if seq_gap > 0 and lag_seconds > acceptable_lag_sec:
+            return GateResult(
+                passed=False,
+                reason=f"Failback blocked: {target_desc} sequence gap ({seq_gap} events behind: applied #{applied_sequence} vs source #{source_sequence}).",
+                details={"applied_sequence": applied_sequence, "source_sequence": source_sequence, "sequence_gap": seq_gap},
+            )
     return GateResult(
         passed=True,
-        reason="Failback readiness verified: Region A is HEALTHY and reverse replication is reconciled. Awaiting deliberate operator authorization.",
-        details={"health": region_a_health, "lag_seconds": lag_seconds},
+        reason=f"Failback readiness verified: {target_desc} is HEALTHY and replication checkpoint is reconciled (lag {lag_seconds:.1f}s <= {acceptable_lag_sec:.1f}s). Awaiting deliberate operator authorization.",
+        details={"health": health, "lag_seconds": lag_seconds, "applied_sequence": applied_sequence},
     )
 
