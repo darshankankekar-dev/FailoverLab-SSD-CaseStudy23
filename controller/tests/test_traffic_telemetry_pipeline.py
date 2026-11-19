@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from src.models import TrafficSampleEntity
-from src.services.traffic_service import traffic_service
+from src.services.traffic_service import traffic_service, to_utc_naive, to_utc_aware
 from src.schemas.traffic import TrafficBatchSubmission
 from gateway.src.telemetry_exporter import GatewayTelemetryExporter
 
@@ -183,6 +183,7 @@ async def test_valid_traffic_batch_ingestion(client: AsyncClient, db_session: As
     assert sample.client_ingress_bytes == 15000
     assert sample.client_egress_bytes == 45000
     assert sample.request_count == 120
+    assert sample.timestamp.tzinfo is None
 
 
 @pytest.mark.asyncio
@@ -742,7 +743,7 @@ async def test_timeseries_historical_merge_persisted_and_in_memory(client: Async
     old_sample = TrafficSampleEntity(
         batch_id="batch-db-old",
         gateway_instance_id="gateway-1",
-        timestamp=t_old,
+        timestamp=to_utc_naive(t_old),
         interval_seconds=1.0,
         client_ingress_bytes=5000,
         client_egress_bytes=10000,
@@ -1044,3 +1045,211 @@ async def test_controller_sse_event_and_metric_broadcasts(client: AsyncClient):
         assert queue.empty()
     finally:
         await traffic_service.unsubscribe_sse(queue)
+
+
+def test_utc_naive_and_aware_helpers():
+    """Verifies that to_utc_naive and to_utc_aware handle naive, UTC-aware, and offset-aware datetimes."""
+    # 1. Naive datetime: treated as UTC
+    naive_dt = datetime(2026, 11, 19, 20, 22, 55)
+    res_naive = to_utc_naive(naive_dt)
+    assert res_naive.tzinfo is None
+    assert res_naive == naive_dt
+
+    res_aware = to_utc_aware(naive_dt)
+    assert res_aware.tzinfo == timezone.utc
+    assert res_aware.year == 2026 and res_aware.hour == 20
+
+    # 2. Aware UTC datetime: strips tzinfo only after conversion
+    aware_utc = datetime(2026, 11, 19, 20, 22, 55, tzinfo=timezone.utc)
+    res_naive = to_utc_naive(aware_utc)
+    assert res_naive.tzinfo is None
+    assert res_naive == datetime(2026, 11, 19, 20, 22, 55)
+
+    res_aware = to_utc_aware(aware_utc)
+    assert res_aware.tzinfo == timezone.utc
+    assert res_aware == aware_utc
+
+    # 3. Aware non-UTC offset datetime (+05:30)
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    aware_ist = datetime(2026, 11, 20, 1, 52, 55, tzinfo=ist_tz)
+    res_naive = to_utc_naive(aware_ist)
+    assert res_naive.tzinfo is None
+    # 2026-11-20 01:52:55+05:30 is 2026-11-19 20:22:55 UTC
+    assert res_naive == datetime(2026, 11, 19, 20, 22, 55)
+
+    res_aware = to_utc_aware(aware_ist)
+    assert res_aware.tzinfo == timezone.utc
+    assert res_aware.day == 19 and res_aware.hour == 20 and res_aware.minute == 22
+
+    # 4. Aware negative offset datetime (-05:00)
+    est_tz = timezone(timedelta(hours=-5))
+    aware_est = datetime(2026, 11, 19, 15, 22, 55, tzinfo=est_tz)
+    res_naive = to_utc_naive(aware_est)
+    assert res_naive.tzinfo is None
+    assert res_naive == datetime(2026, 11, 19, 20, 22, 55)
+
+
+@pytest.mark.asyncio
+async def test_ingest_timezone_aware_utc_timestamp(client: AsyncClient, db_session: AsyncSession):
+    """
+    Verifies that a batch with a timezone-aware UTC timestamp is ingested properly,
+    persisted as UTC-naive in PostgreSQL/SQLite, while kept aware in in-memory structures and API.
+    """
+    ts_aware = datetime(2026, 11, 19, 20, 22, 55, tzinfo=timezone.utc)
+    batch = make_valid_batch(batch_id="batch-tz-aware-utc", timestamp=ts_aware)
+    assert batch["timestamp"] == "2026-11-19T20:22:55+00:00"
+
+    resp = await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=batch,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "accepted"
+
+    # Verify DB persistence: must be UTC-naive!
+    res = await db_session.execute(
+        select(TrafficSampleEntity).where(TrafficSampleEntity.batch_id == "batch-tz-aware-utc")
+    )
+    sample = res.scalar_one_or_none()
+    assert sample is not None
+    assert sample.timestamp.tzinfo is None
+    assert sample.timestamp == datetime(2026, 11, 19, 20, 22, 55)
+
+    # In-memory structures must keep aware UTC
+    latest = traffic_service._latest_sample
+    assert latest is not None
+    assert latest["timestamp"].tzinfo is not None
+    assert latest["timestamp"].utcoffset() == timedelta(0)
+
+    # API summary response must be timezone-aware
+    summary_resp = await client.get("/api/v1/traffic/summary")
+    assert summary_resp.status_code == 200
+    summary_data = summary_resp.json()
+    assert summary_data["last_received_timestamp"] is not None
+    assert "+00:00" in summary_data["last_received_timestamp"] or "Z" in summary_data["last_received_timestamp"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_timestamp_with_non_utc_offset(client: AsyncClient, db_session: AsyncSession):
+    """
+    Verifies that a batch with a non-UTC offset (e.g. +05:30) is correctly converted to UTC-naive
+    upon database persistence, preventing asyncpg 'can't subtract offset-naive and offset-aware datetimes'.
+    """
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    # 2026-11-20 01:52:55 +05:30 corresponds to 2026-11-19 20:22:55 UTC
+    ts_ist = datetime(2026, 11, 20, 1, 52, 55, tzinfo=ist_tz)
+    batch = make_valid_batch(batch_id="batch-tz-non-utc", timestamp=ts_ist)
+
+    resp = await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=batch,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Verify DB persistence: must be converted to UTC and be naive
+    res = await db_session.execute(
+        select(TrafficSampleEntity).where(TrafficSampleEntity.batch_id == "batch-tz-non-utc")
+    )
+    sample = res.scalar_one_or_none()
+    assert sample is not None
+    assert sample.timestamp.tzinfo is None
+    assert sample.timestamp == datetime(2026, 11, 19, 20, 22, 55)
+
+
+@pytest.mark.asyncio
+async def test_timeseries_and_retention_pruning_with_naive_timestamps(client: AsyncClient, db_session: AsyncSession):
+    """
+    Verifies that prune_old_samples and get_traffic_timeseries query boundaries correctly use
+    UTC-naive timestamps against the database, preventing offset-naive vs offset-aware comparison errors.
+    """
+    now = datetime.now(timezone.utc)
+    t_old_aware = now - timedelta(hours=48)
+    t_recent_aware = now - timedelta(seconds=120)
+
+    # Insert historical samples with UTC-naive timestamps as asyncpg stores them
+    sample_old = TrafficSampleEntity(
+        batch_id="batch-prune-old",
+        gateway_instance_id="gateway-1",
+        timestamp=to_utc_naive(t_old_aware),
+        interval_seconds=1.0,
+        client_ingress_bytes=1000,
+        client_egress_bytes=2000,
+        client_ingress_rate=100.0,
+        client_egress_rate=200.0,
+        upstream_ingress_bytes=800,
+        upstream_egress_bytes=400,
+        upstream_ingress_rate=80.0,
+        upstream_egress_rate=40.0,
+        request_count=10,
+        request_rate=1.0,
+        status_2xx=10,
+        status_3xx=0,
+        status_4xx=0,
+        status_5xx=0,
+        rate_limited_429=0,
+        latency_avg_ms=15.0,
+        latency_p50_ms=12.0,
+        latency_p95_ms=25.0,
+        latency_p99_ms=40.0,
+        regional_traffic_json={},
+        traffic_sources_json={},
+        dropped_telemetry_count=0,
+    )
+    sample_recent = TrafficSampleEntity(
+        batch_id="batch-prune-recent",
+        gateway_instance_id="gateway-1",
+        timestamp=to_utc_naive(t_recent_aware),
+        interval_seconds=1.0,
+        client_ingress_bytes=5000,
+        client_egress_bytes=10000,
+        client_ingress_rate=500.0,
+        client_egress_rate=1000.0,
+        upstream_ingress_bytes=4000,
+        upstream_egress_bytes=2000,
+        upstream_ingress_rate=400.0,
+        upstream_egress_rate=200.0,
+        request_count=50,
+        request_rate=5.0,
+        status_2xx=50,
+        status_3xx=0,
+        status_4xx=0,
+        status_5xx=0,
+        rate_limited_429=0,
+        latency_avg_ms=15.0,
+        latency_p50_ms=12.0,
+        latency_p95_ms=25.0,
+        latency_p99_ms=40.0,
+        regional_traffic_json={},
+        traffic_sources_json={},
+        dropped_telemetry_count=0,
+    )
+    db_session.add_all([sample_old, sample_recent])
+    await db_session.commit()
+
+    # Query timeseries: database query boundaries (cutoff and oldest_mem_ts) must not fail with comparison errors
+    ts_resp = await client.get("/api/v1/traffic/timeseries?time_range_seconds=300&step_seconds=1")
+    assert ts_resp.status_code == 200
+    ts_data = ts_resp.json()
+    assert ts_data["point_count"] >= 1
+    for pt in ts_data["points"]:
+        # All returned points must have timezone-aware timestamps
+        pt_dt = datetime.fromisoformat(pt["timestamp"])
+        assert pt_dt.tzinfo is not None
+
+    # Prune old samples: prune_old_samples must delete sample_old (> 24h) and keep sample_recent
+    deleted = await traffic_service.prune_old_samples(db_session, retention_hours=24)
+    assert deleted >= 1
+
+    # Verify sample_old is gone and sample_recent remains
+    res_old = await db_session.execute(
+        select(TrafficSampleEntity).where(TrafficSampleEntity.batch_id == "batch-prune-old")
+    )
+    assert res_old.scalar_one_or_none() is None
+
+    res_recent = await db_session.execute(
+        select(TrafficSampleEntity).where(TrafficSampleEntity.batch_id == "batch-prune-recent")
+    )
+    assert res_recent.scalar_one_or_none() is not None

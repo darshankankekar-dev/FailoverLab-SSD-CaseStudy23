@@ -22,6 +22,32 @@ from ..schemas.traffic import (
 
 logger = logging.getLogger("controller.traffic_service")
 
+
+def to_utc_naive(dt: datetime) -> datetime:
+    """
+    Converts a datetime to UTC-naive:
+    - If the datetime is naive, treat it as UTC.
+    - If it is timezone-aware, convert it to UTC.
+    - Remove tzinfo only after conversion.
+    - Return the resulting UTC-naive datetime.
+    """
+    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+        return dt.replace(tzinfo=None)
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def to_utc_aware(dt: datetime) -> datetime:
+    """
+    Converts a datetime to UTC-aware:
+    - If the datetime is naive, treat it as UTC.
+    - If it is timezone-aware, convert it to UTC.
+    - Return the resulting UTC-aware datetime.
+    """
+    if dt.tzinfo is None or dt.tzinfo.utcoffset(dt) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 # Static region metadata for the five regions
 FIVE_REGIONS_METADATA = {
     "region-a": {"name": "Mumbai", "cloud_zone": "ap-south-1"},
@@ -164,10 +190,10 @@ class TrafficService:
 
         # 3. Rate calculation & counter reset handling
         prev_batch = self._last_batches.get(batch.gateway_instance_id)
-        batch_ts = batch.timestamp if batch.timestamp.tzinfo else batch.timestamp.replace(tzinfo=timezone.utc)
+        batch_ts = to_utc_aware(batch.timestamp)
 
         if prev_batch is not None:
-            prev_ts = prev_batch.timestamp if prev_batch.timestamp.tzinfo else prev_batch.timestamp.replace(tzinfo=timezone.utc)
+            prev_ts = to_utc_aware(prev_batch.timestamp)
             elapsed = (batch_ts - prev_ts).total_seconds()
             if elapsed <= 0.05:
                 elapsed = max(0.1, batch.reporting_interval_seconds)
@@ -210,7 +236,7 @@ class TrafficService:
 
         elapsed_regional = max(0.1, batch.reporting_interval_seconds)
         if prev_batch is not None:
-            prev_ts = prev_batch.timestamp if prev_batch.timestamp.tzinfo else prev_batch.timestamp.replace(tzinfo=timezone.utc)
+            prev_ts = to_utc_aware(prev_batch.timestamp)
             t_diff = (batch_ts - prev_ts).total_seconds()
             if t_diff > 0.05:
                 elapsed_regional = t_diff
@@ -262,7 +288,7 @@ class TrafficService:
         entity = TrafficSampleEntity(
             batch_id=batch.batch_id,
             gateway_instance_id=batch.gateway_instance_id,
-            timestamp=batch.timestamp,
+            timestamp=to_utc_naive(batch.timestamp),
             interval_seconds=batch.reporting_interval_seconds,
             client_ingress_bytes=batch.client_ingress_bytes,
             client_egress_bytes=batch.client_egress_bytes,
@@ -323,7 +349,7 @@ class TrafficService:
 
         # Check for out-of-order batches:
         # If timestamp is strictly after our latest sample or latest sample is empty, update latest
-        if self._latest_sample is None or batch_ts >= self._latest_sample["timestamp"]:
+        if self._latest_sample is None or batch_ts >= to_utc_aware(self._latest_sample["timestamp"]):
             self._latest_sample = sample_dict
 
         self._recent_samples.append(sample_dict)
@@ -391,8 +417,9 @@ class TrafficService:
 
     async def prune_old_samples(self, session: AsyncSession, retention_hours: int = 24) -> int:
         """Deletes telemetry samples older than configured retention period."""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
-        stmt = delete(TrafficSampleEntity).where(TrafficSampleEntity.timestamp < cutoff)
+        cutoff_aware = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
+        cutoff_naive = to_utc_naive(cutoff_aware)
+        stmt = delete(TrafficSampleEntity).where(TrafficSampleEntity.timestamp < cutoff_naive)
         result = await session.execute(stmt)
         await session.commit()
         deleted_count = result.rowcount or 0
@@ -436,9 +463,7 @@ class TrafficService:
             )
 
         s = self._latest_sample
-        ts = s["timestamp"]
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+        ts = to_utc_aware(s["timestamp"])
         age = max(0.0, (now - ts).total_seconds())
 
         if age <= 3.0:
@@ -488,31 +513,33 @@ class TrafficService:
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(seconds=time_range_seconds)
 
-        # In-memory samples covering the window
+        # In-memory samples covering the window (kept timezone-aware)
         mem_samples = [
             s for s in self._recent_samples
-            if (s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)) >= cutoff
+            if to_utc_aware(s["timestamp"]) >= cutoff
         ]
 
         # Determine if we need older historical samples from the database
         oldest_mem_ts = None
         if mem_samples:
             oldest_mem_ts = min(
-                s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)
+                to_utc_aware(s["timestamp"])
                 for s in mem_samples
             )
 
         db_samples = []
         if oldest_mem_ts is None or oldest_mem_ts > cutoff:
-            stmt = select(TrafficSampleEntity).where(TrafficSampleEntity.timestamp >= cutoff)
+            cutoff_naive = to_utc_naive(cutoff)
+            stmt = select(TrafficSampleEntity).where(TrafficSampleEntity.timestamp >= cutoff_naive)
             if oldest_mem_ts is not None:
-                stmt = stmt.where(TrafficSampleEntity.timestamp < oldest_mem_ts)
+                oldest_mem_ts_naive = to_utc_naive(oldest_mem_ts)
+                stmt = stmt.where(TrafficSampleEntity.timestamp < oldest_mem_ts_naive)
             stmt = stmt.order_by(TrafficSampleEntity.timestamp.asc())
             res = await session.execute(stmt)
             entities = res.scalars().all()
             db_samples = [
                 {
-                    "timestamp": e.timestamp if e.timestamp.tzinfo else e.timestamp.replace(tzinfo=timezone.utc),
+                    "timestamp": to_utc_aware(e.timestamp),
                     "client_ingress_bytes": e.client_ingress_bytes,
                     "client_egress_bytes": e.client_egress_bytes,
                     "client_ingress_rate": e.client_ingress_rate,
@@ -532,7 +559,7 @@ class TrafficService:
         # Combine database history and in-memory history
         all_samples = db_samples + mem_samples
         all_samples.sort(
-            key=lambda s: s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)
+            key=lambda s: to_utc_aware(s["timestamp"])
         )
 
         # Downsample by step_seconds if requested and points exist
@@ -541,7 +568,7 @@ class TrafficService:
             step = max(1, step_seconds)
             for i, s in enumerate(all_samples):
                 if i % step == 0 or i == len(all_samples) - 1:
-                    ts = s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)
+                    ts = to_utc_aware(s["timestamp"])
                     points.append(
                         TrafficTimeseriesPoint(
                             timestamp=ts,
