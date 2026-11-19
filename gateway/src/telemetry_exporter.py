@@ -44,7 +44,7 @@ class GatewayTelemetryExporter:
         backoff_max: float = 10.0,
     ):
         self.controller_url = (controller_url or settings.controller_url).rstrip("/")
-        self.internal_token = internal_token or settings.internal_token
+        self.internal_token = internal_token or getattr(settings, "effective_internal_token", settings.internal_token)
         self.gateway_instance_id = gateway_instance_id or settings.gateway_instance_id
         self.interval_seconds = interval_seconds or settings.telemetry_export_interval_seconds
         self.queue_capacity = queue_capacity or settings.telemetry_queue_capacity

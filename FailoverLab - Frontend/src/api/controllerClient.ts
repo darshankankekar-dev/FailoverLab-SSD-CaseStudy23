@@ -347,7 +347,7 @@ export class ControllerClient {
     const secret = isBrowser
       ? (window as any).__ADMIN_SECRET__ || localStorage.getItem('FAILOVERLAB_ADMIN_SECRET') || ''
       : '';
-    return secret ? { 'X-Admin-Secret': secret, 'X-Internal-Secret': secret } : {};
+    return secret ? { 'X-Admin-Secret': secret } : {};
   }
 
   private async fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 3000): Promise<Response> {

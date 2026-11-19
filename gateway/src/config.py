@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,8 +20,13 @@ class Settings(BaseSettings):
     propagation_percent: int = 100
     
     internal_token: str = "internal-secret-token"
+    internal_api_secret: Optional[str] = None
     simulation_mode: bool = False
     log_level: str = "INFO"
+
+    @property
+    def effective_internal_token(self) -> str:
+        return self.internal_api_secret or self.internal_token
     
     # Telemetry export configuration
     gateway_instance_id: str = "gateway-1"

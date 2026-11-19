@@ -35,7 +35,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${CONTROLLER_DB_NAME:-failover_controller}
     ports:
-      - "${CONTROLLER_DB_PORT:-5434}:5432"
+      - "127.0.0.1:${CONTROLLER_DB_PORT:-5434}:5432"
     volumes:
       - controller_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -67,7 +67,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${REGION_A_DB_NAME:-failover_region_a}
     ports:
-      - "${REGION_A_DB_PORT:-5432}:5432"
+      - "127.0.0.1:${REGION_A_DB_PORT:-5432}:5432"
     volumes:
       - region_a_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -99,7 +99,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${REGION_B_DB_NAME:-failover_region_b}
     ports:
-      - "${REGION_B_DB_PORT:-5433}:5432"
+      - "127.0.0.1:${REGION_B_DB_PORT:-5433}:5432"
     volumes:
       - region_b_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -131,7 +131,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${REGION_C_DB_NAME:-failover_region_c}
     ports:
-      - "${REGION_C_DB_PORT:-5435}:5432"
+      - "127.0.0.1:${REGION_C_DB_PORT:-5435}:5432"
     volumes:
       - region_c_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -163,7 +163,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${REGION_D_DB_NAME:-failover_region_d}
     ports:
-      - "${REGION_D_DB_PORT:-5436}:5432"
+      - "127.0.0.1:${REGION_D_DB_PORT:-5436}:5432"
     volumes:
       - region_d_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -195,7 +195,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
       POSTGRES_DB: ${REGION_E_DB_NAME:-failover_region_e}
     ports:
-      - "${REGION_E_DB_PORT:-5437}:5432"
+      - "127.0.0.1:${REGION_E_DB_PORT:-5437}:5432"
     volumes:
       - region_e_db_data:/var/lib/postgresql/data
     healthcheck:
@@ -237,7 +237,7 @@ services:
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-secret-token}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${REGION_A_PORT:-8001}:8001"
+      - "127.0.0.1:${REGION_A_PORT:-8001}:8001"
     depends_on:
       region-a-db:
         condition: service_healthy
@@ -280,7 +280,7 @@ services:
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-secret-token}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${REGION_B_PORT:-8002}:8002"
+      - "127.0.0.1:${REGION_B_PORT:-8002}:8002"
     depends_on:
       region-b-db:
         condition: service_healthy
@@ -323,7 +323,7 @@ services:
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-secret-token}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${REGION_C_PORT:-8004}:8004"
+      - "127.0.0.1:${REGION_C_PORT:-8004}:8004"
     depends_on:
       region-c-db:
         condition: service_healthy
@@ -366,7 +366,7 @@ services:
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-secret-token}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${REGION_D_PORT:-8005}:8005"
+      - "127.0.0.1:${REGION_D_PORT:-8005}:8005"
     depends_on:
       region-d-db:
         condition: service_healthy
@@ -409,7 +409,7 @@ services:
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-secret-token}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${REGION_E_PORT:-8006}:8006"
+      - "127.0.0.1:${REGION_E_PORT:-8006}:8006"
     depends_on:
       region-e-db:
         condition: service_healthy
@@ -446,11 +446,13 @@ services:
       REGION_E_URL: http://region-e:8006
       GATEWAY_URL: http://gateway:8080
       REPLICATION_WORKER_URL: http://replicator:8003
+      REQUIRE_ADMIN_AUTH: ${REQUIRE_ADMIN_AUTH:-false}
+      ADMIN_API_SECRET: ${ADMIN_API_SECRET:-}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-secret-token}
       SIMULATION_MODE: "false"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${CONTROLLER_PORT:-8000}:8000"
+      - "127.0.0.1:${CONTROLLER_PORT:-8000}:8000"
     depends_on:
       controller-db:
         condition: service_healthy
@@ -490,9 +492,14 @@ services:
       CONTROLLER_URL: http://controller:8000
       DEFAULT_TARGET: region-a
       INTERNAL_TOKEN: ${INTERNAL_API_SECRET:-internal-secret-token}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-internal-secret-token}
+      TELEMETRY_EXPORT_ENABLED: ${TELEMETRY_EXPORT_ENABLED:-true}
+      TELEMETRY_EXPORT_INTERVAL_SECONDS: ${TELEMETRY_EXPORT_INTERVAL_SECONDS:-1.0}
+      TELEMETRY_QUEUE_CAPACITY: ${TELEMETRY_QUEUE_CAPACITY:-100}
+      TELEMETRY_MAX_RETRIES: ${TELEMETRY_MAX_RETRIES:-5}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
     depends_on:
       region-a:
         condition: service_healthy
@@ -545,7 +552,7 @@ services:
       BATCH_SIZE: 50
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
-      - "${REPLICATOR_PORT:-8003}:8003"
+      - "127.0.0.1:${REPLICATOR_PORT:-8003}:8003"
     depends_on:
       controller:
         condition: service_healthy

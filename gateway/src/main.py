@@ -738,22 +738,30 @@ async def get_traffic_history(limit: int = Query(default=100, ge=1, le=250)) -> 
 
 @app.get("/api/v1/traffic/events", tags=["Traffic Control"])
 @app.get("/api/traffic/events", tags=["Traffic Control"])
-async def stream_traffic_events(request: Request):
+async def stream_traffic_events(request: Request, max_events: Optional[int] = Query(None)):
     """
     Server-Sent Events (SSE) live stream of all requests passing through the gateway.
     Each event carries method, path, client_region, served_region, status, duration, WAN delay, wait time.
     """
     async def event_generator():
         queue = await traffic_coordinator.subscribe()
+        events_emitted = 0
         try:
             # Yield initial connect greeting
             yield f"event: connect\ndata: {{\"connected\": true, \"history_count\": {len(traffic_coordinator.traffic_events)}}}\n\n"
+            events_emitted += 1
+            if max_events is not None and events_emitted >= max_events:
+                return
+
             while True:
                 if await request.is_disconnected():
                     break
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=12.0)
                     yield f"data: {event.model_dump_json()}\n\n"
+                    events_emitted += 1
+                    if max_events is not None and events_emitted >= max_events:
+                        break
                 except (asyncio.TimeoutError, TimeoutError):
                     # Heartbeat comment to keep SSE connection alive
                     yield ": ping\n\n"

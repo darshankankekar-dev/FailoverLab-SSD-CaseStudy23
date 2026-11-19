@@ -5,12 +5,12 @@ from ...database import get_db_session
 from ...schemas import StateResponse, QuorumVoteSubmission, TrafficBatchSubmission, TrafficBatchResponse
 from ...models import QuorumVoterEntity
 from ...services import evaluate_primary_health_probes, get_full_state, traffic_service
-from ...security import verify_internal_secret
+from ...security import verify_admin_access, verify_internal_secret
 
 router = APIRouter(prefix="/telemetry", tags=["Internal Telemetry"])
 
 
-@router.post("/tick", response_model=StateResponse)
+@router.post("/tick", response_model=StateResponse, dependencies=[Depends(verify_admin_access)])
 async def trigger_clock_tick(
     delta_seconds: float = Query(default=2.0, ge=0.1, le=10.0),
     session: AsyncSession = Depends(get_db_session),
@@ -20,7 +20,7 @@ async def trigger_clock_tick(
     return await get_full_state(session)
 
 
-@router.post("/vote", response_model=StateResponse)
+@router.post("/vote", response_model=StateResponse, dependencies=[Depends(verify_admin_access)])
 async def submit_voter_vote(
     payload: QuorumVoteSubmission,
     session: AsyncSession = Depends(get_db_session),
