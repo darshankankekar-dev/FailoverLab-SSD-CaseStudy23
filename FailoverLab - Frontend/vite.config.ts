@@ -10,6 +10,22 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      '/api/v1/traffic/summary': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/api/v1/traffic/timeseries': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/api/v1/traffic/regions': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/api/v1/traffic/stream': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/api/v1/traffic': {
         target: 'http://localhost:8080',
         changeOrigin: true,

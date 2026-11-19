@@ -9,19 +9,23 @@ import { ArchitectureView } from './components/architecture/ArchitectureView';
 import { ScenariosView } from './components/scenarios/ScenariosView';
 import { ReportsView } from './components/reports/ReportsView';
 import { OnlineStoreView } from './components/shop/OnlineStoreView';
+import { ControllerDashboardView } from './components/controller/ControllerDashboardView';
 import { TrafficLabView } from './components/traffic/TrafficLabView';
 import { simulationEngine } from './simulation/SimulationEngine';
 import { SCENARIOS } from './data/scenarios';
 import './App.css';
 
-type AppRoute = 'console' | 'shop';
+type AppRoute = 'console' | 'shop' | 'controller';
 
 function App() {
-  // Routing state: detects /shop pathname or #shop hash
+  // Routing state: detects /shop or /controller pathname or hash
   const [currentRoute, setCurrentRoute] = useState<AppRoute>(() => {
     if (typeof window !== 'undefined') {
       const path = window.location.pathname.toLowerCase();
       const hash = window.location.hash.toLowerCase();
+      if (path.startsWith('/controller') || hash === '#controller' || hash.startsWith('#/controller')) {
+        return 'controller';
+      }
       if (path.startsWith('/shop') || hash === '#shop' || hash.startsWith('#/shop')) {
         return 'shop';
       }
@@ -47,7 +51,9 @@ function App() {
     const handlePopState = () => {
       const path = window.location.pathname.toLowerCase();
       const hash = window.location.hash.toLowerCase();
-      if (path.startsWith('/shop') || hash === '#shop' || hash.startsWith('#/shop')) {
+      if (path.startsWith('/controller') || hash === '#controller' || hash.startsWith('#/controller')) {
+        setCurrentRoute('controller');
+      } else if (path.startsWith('/shop') || hash === '#shop' || hash.startsWith('#/shop')) {
         setCurrentRoute('shop');
       } else {
         setCurrentRoute('console');
@@ -61,6 +67,12 @@ function App() {
   const handleNavigateToShop = useCallback(() => {
     window.history.pushState(null, '', '/shop');
     setCurrentRoute('shop');
+    window.scrollTo(0, 0);
+  }, []);
+
+  const handleNavigateToController = useCallback(() => {
+    window.history.pushState(null, '', '/controller');
+    setCurrentRoute('controller');
     window.scrollTo(0, 0);
   }, []);
 
@@ -89,7 +101,22 @@ function App() {
 
   // Dedicated, isolated Online Shopping Customer Storefront
   if (currentRoute === 'shop') {
-    return <OnlineStoreView onNavigateToConsole={handleNavigateToConsole} />;
+    return (
+      <OnlineStoreView
+        onNavigateToConsole={handleNavigateToConsole}
+        onNavigateToController={handleNavigateToController}
+      />
+    );
+  }
+
+  // Dedicated Controller Operations & Traffic Observability Console
+  if (currentRoute === 'controller') {
+    return (
+      <ControllerDashboardView
+        onNavigateToConsole={handleNavigateToConsole}
+        onNavigateToShop={handleNavigateToShop}
+      />
+    );
   }
 
   // Canonical FailoverLab Operations Dashboard
@@ -99,6 +126,7 @@ function App() {
       <Header
         onOpenMethodology={() => setIsMethodologyOpen(true)}
         onNavigateToShop={handleNavigateToShop}
+        onNavigateToController={handleNavigateToController}
       />
 
       {/* Main Console Navigation (5 Sections) */}

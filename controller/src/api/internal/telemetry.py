@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ...database import get_db_session
-from ...schemas import StateResponse, QuorumVoteSubmission
+from ...schemas import StateResponse, QuorumVoteSubmission, TrafficBatchSubmission, TrafficBatchResponse
 from ...models import QuorumVoterEntity
-from ...services import evaluate_primary_health_probes, get_full_state
+from ...services import evaluate_primary_health_probes, get_full_state, traffic_service
+from ...security import verify_internal_secret
 
 router = APIRouter(prefix="/telemetry", tags=["Internal Telemetry"])
 
@@ -32,4 +33,22 @@ async def submit_voter_vote(
         voter.latency_ms = payload.latency_ms
         await session.commit()
     return await get_full_state(session)
+
+
+@router.post(
+    "/traffic-batch",
+    response_model=TrafficBatchResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_internal_secret)],
+)
+async def submit_traffic_batch(
+    payload: TrafficBatchSubmission,
+    session: AsyncSession = Depends(get_db_session),
+) -> TrafficBatchResponse:
+    """
+    Ingests an aggregated one-second network traffic telemetry batch from Gateway.
+    Protected strictly by X-Internal-Secret.
+    Supports idempotent processing, counter reset handling, and persistence.
+    """
+    return await traffic_service.ingest_traffic_batch(session, payload)
 

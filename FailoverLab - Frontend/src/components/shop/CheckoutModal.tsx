@@ -197,7 +197,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <h3 className="section-title">2. Delivery Destination</h3>
                 <div className="form-field-group">
                   <label htmlFor="shipping-address" className="field-label">
-                    Shipping Address ({currentRegion.flag} {currentRegion.name})
+                    Shipping Address ([{currentRegion.flag}] {currentRegion.name})
                   </label>
                   <input
                     id="shipping-address"

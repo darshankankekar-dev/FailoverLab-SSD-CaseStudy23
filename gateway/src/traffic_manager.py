@@ -21,11 +21,20 @@ class TrafficEvent(BaseModel):
     client_region: str
     served_region: str
     request_type: str  # "eventual_read", "strong_read", "write", "internal"
-    rate_limiter_decision: str  # "accepted", "rejected", "delayed"
+    rate_limiter_decision: str  # "accepted", "rejected", "delayed", "idempotent_replay"
     status_code: int
     duration_ms: float
     simulated_wan_delay_ms: float = 0.0
     queue_wait_time_ms: float = 0.0
+    request_payload_bytes: int = 0
+    response_payload_bytes: int = 0
+    request_category: str = "other"
+    upstream_region: Optional[str] = None
+    upstream_request_bytes: int = 0
+    upstream_response_bytes: int = 0
+    upstream_duration_ms: float = 0.0
+    traffic_source: str = "online_store"
+    is_replay: bool = False
 
 
 class LimiterMode(str, Enum):
@@ -583,6 +592,11 @@ class GatewayTrafficCoordinator:
         self.server_failures = 0
         self.latency_samples.clear()
         self.traffic_events.clear()
+        try:
+            from .telemetry import telemetry_collector
+            telemetry_collector.reset()
+        except ImportError:
+            pass
 
 
 traffic_coordinator = GatewayTrafficCoordinator()

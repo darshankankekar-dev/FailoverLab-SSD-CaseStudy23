@@ -8,6 +8,7 @@ from .entities import (
     QuorumVoterEntity,
     AuditEventEntity,
     TransitionIntentEntity,
+    TrafficSampleEntity,
 )
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "QuorumVoterEntity",
     "AuditEventEntity",
     "TransitionIntentEntity",
+    "TrafficSampleEntity",
 ]
 

@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     internal_token: str = "internal-secret-token"
     simulation_mode: bool = False
     log_level: str = "INFO"
+    
+    # Telemetry export configuration
+    gateway_instance_id: str = "gateway-1"
+    telemetry_export_enabled: bool = True
+    telemetry_export_interval_seconds: float = 1.0
+    telemetry_queue_capacity: int = 100
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

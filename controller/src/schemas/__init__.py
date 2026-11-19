@@ -42,6 +42,18 @@ from .internal import (
     ChaosInjectionRequest,
 )
 
+from .traffic import (
+    TrafficBatchSubmission,
+    TrafficBatchResponse,
+    TrafficSummaryResponse,
+    TrafficTimeseriesPoint,
+    TrafficTimeseriesResponse,
+    RegionalTrafficItem,
+    RegionalTrafficResponse,
+    TrafficEventModel,
+    TrafficEventsResponse,
+)
+
 __all__ = [
     "ControllerState",
     "RegionId",
@@ -82,5 +94,14 @@ __all__ = [
     "RegionalHealthReport",
     "QuorumVoteSubmission",
     "ChaosInjectionRequest",
+    "TrafficBatchSubmission",
+    "TrafficBatchResponse",
+    "TrafficSummaryResponse",
+    "TrafficTimeseriesPoint",
+    "TrafficTimeseriesResponse",
+    "RegionalTrafficItem",
+    "RegionalTrafficResponse",
+    "TrafficEventModel",
+    "TrafficEventsResponse",
 ]
 

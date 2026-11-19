@@ -13,7 +13,7 @@ from ...models import (
     QuorumVoterEntity,
 )
 from ...domain.registry import REGION_REGISTRY
-from ...services import log_audit_event, get_full_state
+from ...services import log_audit_event, get_full_state, traffic_service
 from ...services.metrics_tracker import metrics_tracker
 from ...services.clients import regional_client, gateway_client
 from ...security import verify_admin_access
@@ -91,6 +91,9 @@ async def reset_simulation(
         policy.majority_required = 2
         policy.acceptable_replication_lag_sec = 5.0
         policy.auto_failover_enabled = True
+
+    # Reset traffic service in-memory buffers
+    traffic_service.reset()
 
     # 8. Synchronize regional services and gateway
     try:

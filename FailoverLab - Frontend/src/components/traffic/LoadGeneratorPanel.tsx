@@ -7,11 +7,11 @@ type BurstSize = 1 | 10 | 25 | 50 | 100;
 const BURST_SIZES: BurstSize[] = [1, 10, 25, 50, 100];
 
 const CLIENT_REGIONS = [
-  { id: 'ap-south-1', name: 'Mumbai (ap-south-1)', flag: '🇮🇳' },
-  { id: 'ap-southeast-1', name: 'Singapore (ap-southeast-1)', flag: '🇸🇬' },
-  { id: 'eu-central-1', name: 'Frankfurt (eu-central-1)', flag: '🇩🇪' },
-  { id: 'us-east-1', name: 'Virginia (us-east-1)', flag: '🇺🇸' },
-  { id: 'sa-east-1', name: 'São Paulo (sa-east-1)', flag: '🇧🇷' },
+  { id: 'ap-south-1', name: 'Mumbai (ap-south-1)', code: '[IN]' },
+  { id: 'ap-southeast-1', name: 'Singapore (ap-southeast-1)', code: '[SG]' },
+  { id: 'eu-central-1', name: 'Frankfurt (eu-central-1)', code: '[DE]' },
+  { id: 'us-east-1', name: 'Virginia (us-east-1)', code: '[US]' },
+  { id: 'sa-east-1', name: 'São Paulo (sa-east-1)', code: '[BR]' },
 ];
 
 export const LoadGeneratorPanel: React.FC = () => {
@@ -229,7 +229,7 @@ export const LoadGeneratorPanel: React.FC = () => {
             >
               {CLIENT_REGIONS.map((cr) => (
                 <option key={cr.id} value={cr.id}>
-                  {cr.flag} {cr.name}
+                  {cr.code} {cr.name}
                 </option>
               ))}
             </select>

@@ -27,9 +27,13 @@ import './Shop.css';
 
 interface OnlineStoreViewProps {
   onNavigateToConsole: () => void;
+  onNavigateToController?: () => void;
 }
 
-export const OnlineStoreView: React.FC<OnlineStoreViewProps> = ({ onNavigateToConsole }) => {
+export const OnlineStoreView: React.FC<OnlineStoreViewProps> = ({
+  onNavigateToConsole,
+  onNavigateToController,
+}) => {
   // Region Selection State
   const [selectedRegion, setSelectedRegion] = useState<string>(() => {
     return localStorage.getItem('failoverlab_client_region') || 'ap-south-1';
@@ -213,6 +217,7 @@ export const OnlineStoreView: React.FC<OnlineStoreViewProps> = ({ onNavigateToCo
         cartCount={totalCartCount}
         onOpenCart={() => setIsCartOpen(true)}
         onNavigateToConsole={onNavigateToConsole}
+        onNavigateToController={onNavigateToController}
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         searchQuery={searchQuery}

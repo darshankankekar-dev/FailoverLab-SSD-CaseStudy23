@@ -23,6 +23,13 @@ from .logging_config import (
     region_id_ctx,
 )
 from .metrics import gateway_metrics
+from .telemetry import (
+    ASGITrafficTelemetryMiddleware,
+    telemetry_collector,
+    normalize_endpoint,
+    detect_traffic_source,
+)
+from .telemetry_exporter import telemetry_exporter
 
 setup_structured_logging(service_name="gateway", log_level=settings.log_level)
 logger = logging.getLogger("gateway.main")
@@ -90,7 +97,12 @@ async def lifespan(app: FastAPI):
     await reconcile_route_from_controller()
     # Start leaky bucket background drain dispatcher
     await traffic_coordinator.leaky_shaper.start()
+    # Start background telemetry exporter if enabled
+    if settings.telemetry_export_enabled:
+        await telemetry_exporter.start()
     yield
+    if settings.telemetry_export_enabled:
+        await telemetry_exporter.stop()
     await traffic_coordinator.leaky_shaper.stop()
     await http_client.aclose()
 
@@ -109,6 +121,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(ASGITrafficTelemetryMiddleware)
 
 
 def classify_request_type(method: str, path: str) -> str:
@@ -157,29 +170,25 @@ async def logging_and_traffic_middleware(request: Request, call_next):
     )
     client_region = request.headers.get("X-Client-Region") or client_key
 
+    # Classify traffic source, endpoint category, and measure client request payload bytes
+    headers_map = {k.lower(): v for k, v in request.headers.items()}
+    traffic_src = detect_traffic_source(headers_map, path)
+    norm_template, req_category = normalize_endpoint(path)
+
+    if request.method in {"POST", "PUT", "PATCH"}:
+        req_body = await request.body()
+        req_payload_bytes = len(req_body) if req_body else 0
+    else:
+        req_payload_bytes = 0
+    request.state.measured_ingress_bytes = req_payload_bytes
+
     if not is_internal_or_health:
         # 1. Mode: TOKEN_BUCKET
         if traffic_coordinator.mode == LimiterMode.TOKEN_BUCKET:
             allowed, remaining, retry_after = await traffic_coordinator.token_limiter.check(client_key)
             if not allowed:
                 traffic_coordinator.record_request_outcome(status.HTTP_429_TOO_MANY_REQUESTS, 0.5)
-                await traffic_coordinator.record_traffic_event(
-                    TrafficEvent(
-                        request_id=request_id,
-                        method=request.method,
-                        endpoint=path,
-                        client_region=client_region,
-                        served_region=route_table.active_target,
-                        request_type=classify_request_type(request.method, path),
-                        rate_limiter_decision="rejected",
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        duration_ms=0.5,
-                        simulated_wan_delay_ms=0.0,
-                        queue_wait_time_ms=0.0,
-                    )
-                )
-                logger.warning(f"[TOKEN_BUCKET_THROTTLED] Client '{client_key}' exceeded capacity. Retry-After: {retry_after}s")
-                return JSONResponse(
+                resp_429 = JSONResponse(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     content={
                         "error": "Rate limit exceeded",
@@ -197,6 +206,44 @@ async def logging_and_traffic_middleware(request: Request, call_next):
                         "X-Request-ID": request_id,
                     },
                 )
+                resp_payload_bytes = len(resp_429.body) if hasattr(resp_429, "body") else 0
+                telemetry_collector.record_client_request(
+                    method=request.method,
+                    path=path,
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    ingress_bytes=req_payload_bytes,
+                    egress_bytes=resp_payload_bytes,
+                    duration_ms=0.5,
+                    traffic_source=traffic_src,
+                    request_class=classify_request_type(request.method, path),
+                    served_region=route_table.active_target,
+                )
+                await traffic_coordinator.record_traffic_event(
+                    TrafficEvent(
+                        request_id=request_id,
+                        method=request.method,
+                        endpoint=path,
+                        client_region=client_region,
+                        served_region=route_table.active_target,
+                        request_type=classify_request_type(request.method, path),
+                        rate_limiter_decision="rejected",
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        duration_ms=0.5,
+                        simulated_wan_delay_ms=0.0,
+                        queue_wait_time_ms=0.0,
+                        request_payload_bytes=req_payload_bytes,
+                        response_payload_bytes=resp_payload_bytes,
+                        request_category=req_category,
+                        upstream_region=None,
+                        upstream_request_bytes=0,
+                        upstream_response_bytes=0,
+                        upstream_duration_ms=0.0,
+                        traffic_source=traffic_src,
+                        is_replay=False,
+                    )
+                )
+                logger.warning(f"[TOKEN_BUCKET_THROTTLED] Client '{client_key}' exceeded capacity. Retry-After: {retry_after}s")
+                return resp_429
 
         # 2. Mode: LEAKY_BUCKET
         elif traffic_coordinator.mode == LimiterMode.LEAKY_BUCKET:
@@ -204,23 +251,7 @@ async def logging_and_traffic_middleware(request: Request, call_next):
                 allowed, wait_or_retry, err_msg = await traffic_coordinator.leaky_shaper.enqueue(client_key, request_id)
                 if not allowed:
                     traffic_coordinator.record_request_outcome(status.HTTP_429_TOO_MANY_REQUESTS, 0.5)
-                    await traffic_coordinator.record_traffic_event(
-                        TrafficEvent(
-                            request_id=request_id,
-                            method=request.method,
-                            endpoint=path,
-                            client_region=client_region,
-                            served_region=route_table.active_target,
-                            request_type=classify_request_type(request.method, path),
-                            rate_limiter_decision="rejected",
-                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                            duration_ms=0.5,
-                            simulated_wan_delay_ms=0.0,
-                            queue_wait_time_ms=0.0,
-                        )
-                    )
-                    logger.warning(f"[LEAKY_BUCKET_OVERFLOW] Client '{client_key}' rejected: {err_msg}")
-                    return JSONResponse(
+                    resp_429 = JSONResponse(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                         content={
                             "error": "Rate limit exceeded",
@@ -236,6 +267,44 @@ async def logging_and_traffic_middleware(request: Request, call_next):
                             "X-Request-ID": request_id,
                         },
                     )
+                    resp_payload_bytes = len(resp_429.body) if hasattr(resp_429, "body") else 0
+                    telemetry_collector.record_client_request(
+                        method=request.method,
+                        path=path,
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        ingress_bytes=req_payload_bytes,
+                        egress_bytes=resp_payload_bytes,
+                        duration_ms=0.5,
+                        traffic_source=traffic_src,
+                        request_class=classify_request_type(request.method, path),
+                        served_region=route_table.active_target,
+                    )
+                    await traffic_coordinator.record_traffic_event(
+                        TrafficEvent(
+                            request_id=request_id,
+                            method=request.method,
+                            endpoint=path,
+                            client_region=client_region,
+                            served_region=route_table.active_target,
+                            request_type=classify_request_type(request.method, path),
+                            rate_limiter_decision="rejected",
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            duration_ms=0.5,
+                            simulated_wan_delay_ms=0.0,
+                            queue_wait_time_ms=0.0,
+                            request_payload_bytes=req_payload_bytes,
+                            response_payload_bytes=resp_payload_bytes,
+                            request_category=req_category,
+                            upstream_region=None,
+                            upstream_request_bytes=0,
+                            upstream_response_bytes=0,
+                            upstream_duration_ms=0.0,
+                            traffic_source=traffic_src,
+                            is_replay=False,
+                        )
+                    )
+                    logger.warning(f"[LEAKY_BUCKET_OVERFLOW] Client '{client_key}' rejected: {err_msg}")
+                    return resp_429
                 else:
                     leaky_wait_ms = round(wait_or_retry * 1000, 2)
                     if leaky_wait_ms > 5.0:
@@ -259,6 +328,11 @@ async def logging_and_traffic_middleware(request: Request, call_next):
             or path == "/metrics"
         )
         if not is_mgmt:
+            status_code = getattr(exc, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
+            up_reg = getattr(request.state, "upstream_region", None)
+            up_req_b = getattr(request.state, "upstream_request_bytes", 0)
+            up_resp_b = getattr(request.state, "upstream_response_bytes", 0)
+            up_dur = getattr(request.state, "upstream_duration_ms", 0.0)
             await traffic_coordinator.record_traffic_event(
                 TrafficEvent(
                     request_id=request_id,
@@ -268,10 +342,19 @@ async def logging_and_traffic_middleware(request: Request, call_next):
                     served_region=route_table.active_target,
                     request_type=classify_request_type(request.method, path),
                     rate_limiter_decision=rate_decision,
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    status_code=status_code,
                     duration_ms=round(elapsed_ms, 2),
                     simulated_wan_delay_ms=0.0,
                     queue_wait_time_ms=leaky_wait_ms,
+                    request_payload_bytes=req_payload_bytes,
+                    response_payload_bytes=0,
+                    request_category=req_category,
+                    upstream_region=up_reg,
+                    upstream_request_bytes=up_req_b,
+                    upstream_response_bytes=up_resp_b,
+                    upstream_duration_ms=round(up_dur, 2),
+                    traffic_source=traffic_src,
+                    is_replay=False,
                 )
             )
         raise exc
@@ -283,6 +366,23 @@ async def logging_and_traffic_middleware(request: Request, call_next):
     traffic_coordinator.record_request_outcome(response.status_code, elapsed_ms)
 
     routed_region = response.headers.get("X-Served-Region") or response.headers.get("X-Routed-To-Region") or route_table.active_target
+    request.state.routed_region = routed_region
+
+    is_replay = getattr(request.state, "is_replay", False)
+    if is_replay:
+        rate_decision = "idempotent_replay"
+
+    up_reg = getattr(request.state, "upstream_region", None)
+    up_req_b = getattr(request.state, "upstream_request_bytes", 0)
+    up_resp_b = getattr(request.state, "upstream_response_bytes", 0)
+    up_dur = getattr(request.state, "upstream_duration_ms", 0.0)
+
+    # Response payload bytes
+    resp_payload_bytes = getattr(request.state, "response_payload_bytes", 0)
+    if resp_payload_bytes == 0 and hasattr(response, "body") and isinstance(getattr(response, "body", None), (bytes, bytearray)):
+        resp_payload_bytes = len(response.body)
+    if resp_payload_bytes == 0 and up_resp_b > 0:
+        resp_payload_bytes = up_resp_b
 
     # Record traffic event for customer/application requests
     is_mgmt = (
@@ -300,6 +400,7 @@ async def logging_and_traffic_middleware(request: Request, call_next):
             except ValueError:
                 wan_delay_val = 0.0
         req_type = response.headers.get("X-Consistency-Level") or classify_request_type(request.method, path)
+        request.state.request_type = req_type
         await traffic_coordinator.record_traffic_event(
             TrafficEvent(
                 request_id=request_id,
@@ -313,6 +414,15 @@ async def logging_and_traffic_middleware(request: Request, call_next):
                 duration_ms=round(elapsed_ms, 2),
                 simulated_wan_delay_ms=wan_delay_val,
                 queue_wait_time_ms=leaky_wait_ms,
+                request_payload_bytes=req_payload_bytes,
+                response_payload_bytes=resp_payload_bytes,
+                request_category=req_category,
+                upstream_region=up_reg,
+                upstream_request_bytes=up_req_b,
+                upstream_response_bytes=up_resp_b,
+                upstream_duration_ms=round(up_dur, 2),
+                traffic_source=traffic_src,
+                is_replay=is_replay,
             )
         )
 
@@ -433,6 +543,64 @@ async def prometheus_metrics() -> Response:
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
+@app.get("/api/v1/traffic/telemetry", tags=["Traffic Telemetry"])
+@app.get("/api/traffic/telemetry", tags=["Traffic Telemetry"])
+async def get_traffic_telemetry() -> Dict[str, Any]:
+    """Returns real-time customer ingress/egress payload telemetry and upstream regional traffic metrics."""
+    data = telemetry_collector.get_telemetry_snapshot(route_table.active_target)
+    data["exporter"] = telemetry_exporter.get_status()
+    return data
+
+
+@app.get("/api/v1/traffic/exporter/status", tags=["Traffic Telemetry"])
+async def get_traffic_exporter_status() -> Dict[str, Any]:
+    """Returns status of the background telemetry exporter to Controller."""
+    return telemetry_exporter.get_status()
+
+
+@app.get("/api/v1/traffic/summary", tags=["Controller Traffic Proxy"])
+async def proxy_traffic_summary(request: Request):
+    """Proxies request to Controller's aggregated traffic summary endpoint."""
+    global http_client
+    if http_client is None:
+        return JSONResponse(status_code=503, content={"detail": "Gateway HTTP client not ready"})
+    try:
+        url = f"{settings.controller_url}/api/v1/traffic/summary"
+        resp = await http_client.get(url, params=dict(request.query_params))
+        return Response(content=resp.content, status_code=resp.status_code, media_type="application/json")
+    except Exception as e:
+        logger.warning(f"Could not forward traffic summary to Controller: {e}")
+        return JSONResponse(status_code=503, content={"detail": f"Controller unavailable: {e}"})
+
+
+@app.get("/api/v1/traffic/timeseries", tags=["Controller Traffic Proxy"])
+async def proxy_traffic_timeseries(request: Request):
+    """Proxies request to Controller's historical traffic timeseries endpoint."""
+    global http_client
+    if http_client is None:
+        return JSONResponse(status_code=503, content={"detail": "Gateway HTTP client not ready"})
+    try:
+        url = f"{settings.controller_url}/api/v1/traffic/timeseries"
+        resp = await http_client.get(url, params=dict(request.query_params))
+        return Response(content=resp.content, status_code=resp.status_code, media_type="application/json")
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"detail": f"Controller unavailable: {e}"})
+
+
+@app.get("/api/v1/traffic/regions", tags=["Controller Traffic Proxy"])
+async def proxy_traffic_regions(request: Request):
+    """Proxies request to Controller's regional traffic endpoint."""
+    global http_client
+    if http_client is None:
+        return JSONResponse(status_code=503, content={"detail": "Gateway HTTP client not ready"})
+    try:
+        url = f"{settings.controller_url}/api/v1/traffic/regions"
+        resp = await http_client.get(url, params=dict(request.query_params))
+        return Response(content=resp.content, status_code=resp.status_code, media_type="application/json")
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"detail": f"Controller unavailable: {e}"})
+
+
 @app.get("/api/v1/metrics", tags=["Metrics"])
 async def json_metrics() -> Dict[str, Any]:
     """Returns truthful measured JSON operational metrics for the gateway."""
@@ -546,10 +714,13 @@ async def update_traffic_config(payload: TrafficConfigUpdate) -> Dict[str, Any]:
 async def reset_traffic_state() -> Dict[str, Any]:
     """Resets all token buckets, leaky queues, and metrics counters."""
     traffic_coordinator.reset_all()
+    telemetry_collector.reset()
+    gateway_metrics.reset()
     return {
         "success": True,
         "message": "Traffic manager state reset successfully",
         "traffic_control": traffic_coordinator.get_full_status(),
+        "traffic_telemetry": telemetry_collector.get_telemetry_snapshot(route_table.active_target),
     }
 
 
@@ -622,10 +793,13 @@ async def public_update_traffic_config(payload: TrafficConfigUpdate) -> Dict[str
 async def public_reset_traffic() -> Dict[str, Any]:
     """Public reset endpoint for dashboard."""
     traffic_coordinator.reset_all()
+    telemetry_collector.reset()
+    gateway_metrics.reset()
     return {
         "success": True,
         "message": "Traffic manager state reset successfully",
         "traffic_control": traffic_coordinator.get_full_status(),
+        "traffic_telemetry": telemetry_collector.get_telemetry_snapshot(route_table.active_target),
     }
 
 
@@ -705,6 +879,7 @@ async def _execute_backend_request(request: Request, path: str, decision: RouteD
 
     target_endpoint = f"{decision.target_url}{path}"
     body = await request.body()
+    up_req_bytes = len(body) if body else 0
     forward_headers = {
         k: v for k, v in request.headers.items()
         if k.lower() not in {"host", "content-length"}
@@ -721,6 +896,22 @@ async def _execute_backend_request(request: Request, path: str, decision: RouteD
         )
         elapsed_backend_ms = (time.perf_counter() - start_time) * 1000
         route_table.record_measured_latency(decision.target_region, elapsed_backend_ms)
+
+        up_resp_bytes = len(backend_resp.content) if backend_resp.content else 0
+        telemetry_collector.record_upstream(
+            region_id=decision.target_region,
+            request_bytes=up_req_bytes,
+            response_bytes=up_resp_bytes,
+            duration_ms=elapsed_backend_ms,
+            status_code=backend_resp.status_code,
+        )
+
+        request.state.upstream_region = decision.target_region
+        request.state.upstream_request_bytes = up_req_bytes
+        request.state.upstream_response_bytes = up_resp_bytes
+        request.state.upstream_duration_ms = elapsed_backend_ms
+        request.state.upstream_status = backend_resp.status_code
+        request.state.response_payload_bytes = up_resp_bytes
 
         resp_headers = dict(backend_resp.headers)
         req_id = getattr(request.state, "request_id", None) or f"req-{uuid.uuid4().hex[:10]}"
@@ -745,6 +936,21 @@ async def _execute_backend_request(request: Request, path: str, decision: RouteD
             media_type=backend_resp.headers.get("content-type"),
         )
     except httpx.ConnectError as ce:
+        elapsed_backend_ms = (time.perf_counter() - start_time) * 1000
+        telemetry_collector.record_upstream(
+            region_id=decision.target_region,
+            request_bytes=up_req_bytes,
+            response_bytes=0,
+            duration_ms=elapsed_backend_ms,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            is_failure=True,
+        )
+        request.state.upstream_region = decision.target_region
+        request.state.upstream_request_bytes = up_req_bytes
+        request.state.upstream_response_bytes = 0
+        request.state.upstream_duration_ms = elapsed_backend_ms
+        request.state.upstream_status = status.HTTP_503_SERVICE_UNAVAILABLE
+
         logger.error(f"Cannot reach target region at {target_endpoint}: {ce}")
         err_type = "Active region unavailable" if decision.target_region == route_table.active_target else "Target region unavailable"
         raise HTTPException(
@@ -758,6 +964,21 @@ async def _execute_backend_request(request: Request, path: str, decision: RouteD
             },
         )
     except httpx.TimeoutException as te:
+        elapsed_backend_ms = (time.perf_counter() - start_time) * 1000
+        telemetry_collector.record_upstream(
+            region_id=decision.target_region,
+            request_bytes=up_req_bytes,
+            response_bytes=0,
+            duration_ms=elapsed_backend_ms,
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            is_timeout=True,
+        )
+        request.state.upstream_region = decision.target_region
+        request.state.upstream_request_bytes = up_req_bytes
+        request.state.upstream_response_bytes = 0
+        request.state.upstream_duration_ms = elapsed_backend_ms
+        request.state.upstream_status = status.HTTP_504_GATEWAY_TIMEOUT
+
         logger.error(f"Timeout connecting to target region at {target_endpoint}: {te}")
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -772,6 +993,21 @@ async def _execute_backend_request(request: Request, path: str, decision: RouteD
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise exc
+        elapsed_backend_ms = (time.perf_counter() - start_time) * 1000
+        telemetry_collector.record_upstream(
+            region_id=decision.target_region,
+            request_bytes=up_req_bytes,
+            response_bytes=0,
+            duration_ms=elapsed_backend_ms,
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            is_failure=True,
+        )
+        request.state.upstream_region = decision.target_region
+        request.state.upstream_request_bytes = up_req_bytes
+        request.state.upstream_response_bytes = 0
+        request.state.upstream_duration_ms = elapsed_backend_ms
+        request.state.upstream_status = status.HTTP_502_BAD_GATEWAY
+
         logger.error(f"Error proxying {request.method} to {target_endpoint}: {exc}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -827,6 +1063,12 @@ async def _forward_request(request: Request, path: str) -> Response:
             logger.info(f"[IDEMPOTENCY_HIT] Returning cached response for key '{idempotency_key}'")
             resp_headers = dict(cached.headers)
             resp_headers["X-Idempotency-Replay"] = "true"
+            request.state.is_replay = True
+            request.state.upstream_region = None
+            request.state.upstream_request_bytes = 0
+            request.state.upstream_response_bytes = 0
+            request.state.upstream_duration_ms = 0.0
+            request.state.response_payload_bytes = len(cached.content)
             return Response(
                 content=cached.content,
                 status_code=cached.status_code,
@@ -842,6 +1084,12 @@ async def _forward_request(request: Request, path: str) -> Response:
                 logger.info(f"[IDEMPOTENCY_HIT] Returning cached response for key '{idempotency_key}' (post-lock)")
                 resp_headers = dict(cached.headers)
                 resp_headers["X-Idempotency-Replay"] = "true"
+                request.state.is_replay = True
+                request.state.upstream_region = None
+                request.state.upstream_request_bytes = 0
+                request.state.upstream_response_bytes = 0
+                request.state.upstream_duration_ms = 0.0
+                request.state.response_payload_bytes = len(cached.content)
                 return Response(
                     content=cached.content,
                     status_code=cached.status_code,

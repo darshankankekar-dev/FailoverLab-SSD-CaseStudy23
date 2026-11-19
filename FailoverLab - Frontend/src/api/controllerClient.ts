@@ -203,6 +203,110 @@ export interface RecordItemDto {
   updated_at: string;
 }
 
+export interface TrafficSummaryDto {
+  client_ingress_bytes_per_sec: number;
+  client_egress_bytes_per_sec: number;
+  client_ingress_bytes_total: number;
+  client_egress_bytes_total: number;
+  upstream_egress_bytes_per_sec: number;
+  upstream_ingress_bytes_per_sec: number;
+  upstream_egress_bytes_total: number;
+  upstream_ingress_bytes_total: number;
+  requests_per_sec: number;
+  requests_total: number;
+  success_count: number;
+  client_error_count: number;
+  server_error_count: number;
+  rate_limited_count: number;
+  status_2xx: number;
+  status_3xx: number;
+  status_4xx: number;
+  status_5xx: number;
+  status_429: number;
+  latency_p50_ms: number;
+  latency_p95_ms: number;
+  latency_p99_ms: number;
+  latency_avg_ms: number;
+  last_telemetry_timestamp: string | null;
+  telemetry_freshness: 'FRESH' | 'STALE' | 'UNAVAILABLE';
+  measurement_source: string;
+  active_gateway_instances: string[];
+  dropped_batches_total: number;
+}
+
+export interface TrafficTimeseriesPointDto {
+  timestamp: string;
+  client_ingress_bytes_per_sec: number;
+  client_egress_bytes_per_sec: number;
+  upstream_egress_bytes_per_sec: number;
+  upstream_ingress_bytes_per_sec: number;
+  requests_per_sec: number;
+  error_rate_percent: number;
+  latency_p95_ms: number;
+}
+
+export interface TrafficTimeseriesResponseDto {
+  range_seconds: number;
+  step_seconds: number;
+  points_count: number;
+  points: TrafficTimeseriesPointDto[];
+}
+
+export interface RegionalTrafficItemDto {
+  region_id: string;
+  city: string;
+  role: 'ACTIVE' | 'STANDBY';
+  health: string;
+  requests_per_sec: number;
+  requests_total: number;
+  ingress_bytes_per_sec: number;
+  egress_bytes_per_sec: number;
+  ingress_bytes_total: number;
+  egress_bytes_total: number;
+  replication_lag_seconds: number;
+  last_telemetry_timestamp: string | null;
+}
+
+export interface RegionalTrafficResponseDto {
+  active_region: string;
+  regions: RegionalTrafficItemDto[];
+}
+
+export interface TrafficEventItemDto {
+  id: string;
+  timestamp: string;
+  request_id: string;
+  method: string;
+  endpoint: string;
+  client_region: string;
+  served_region: string;
+  status_code: number;
+  payload_ingress_bytes: number;
+  payload_egress_bytes: number;
+  duration_ms: number;
+  request_type: string;
+  traffic_source: string;
+}
+
+export interface TrafficEventsResponseDto {
+  total: number;
+  page: number;
+  page_size: number;
+  events: TrafficEventItemDto[];
+}
+
+export interface AuditEventDto {
+  id: string;
+  simulated_time_seconds: number;
+  wall_clock_timestamp: string;
+  severity: 'INFO' | 'WARNING' | 'CRITICAL';
+  subsystem: string;
+  transition: string;
+  reason: string;
+  details?: Record<string, any>;
+  metadata_json?: Record<string, any>;
+}
+
 export class ControllerClient {
   private controllerUrl: string;
   private gatewayUrl: string;
@@ -581,6 +685,152 @@ export class ControllerClient {
     });
     const data = await res.json().catch(() => ({}));
     return { ok: res.ok, status: res.status, data };
+  }
+
+  // Controller Real-Time Traffic Telemetry APIs
+  public async fetchTrafficSummary(): Promise<TrafficSummaryDto | null> {
+    try {
+      const base = this.controllerUrl;
+      const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/summary`, {}, 2500);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  public async fetchTrafficTimeseries(rangeSeconds = 300, stepSeconds = 1): Promise<TrafficTimeseriesResponseDto | null> {
+    try {
+      const base = this.controllerUrl;
+      const res = await this.fetchWithTimeout(
+        `${base}/api/v1/traffic/timeseries?time_range_seconds=${rangeSeconds}&step_seconds=${stepSeconds}`,
+        {},
+        3000
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  public async fetchRegionalTraffic(): Promise<RegionalTrafficResponseDto | null> {
+    try {
+      const base = this.controllerUrl;
+      const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/regions`, {}, 2500);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  public async fetchTrafficEvents(
+    page = 1,
+    pageSize = 20,
+    filters?: { region?: string; statusCode?: number; requestType?: string; method?: string }
+  ): Promise<TrafficEventsResponseDto | null> {
+    try {
+      const base = this.controllerUrl;
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      if (filters?.region && filters.region !== 'ALL') params.append('region', filters.region);
+      if (filters?.statusCode) params.append('status_code', String(filters.statusCode));
+      if (filters?.requestType && filters.requestType !== 'ALL') params.append('request_type', filters.requestType);
+      if (filters?.method && filters.method !== 'ALL') params.append('method', filters.method);
+
+      const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/events?${params.toString()}`, {}, 3000);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  public async fetchAuditEvents(limit = 100, severity?: string, subsystem?: string): Promise<AuditEventDto[]> {
+    try {
+      const base = this.controllerUrl;
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (severity && severity !== 'ALL') params.append('severity', severity);
+      if (subsystem && subsystem !== 'ALL') params.append('subsystem', subsystem);
+
+      const res = await this.fetchWithTimeout(`${base}/api/v1/events?${params.toString()}`, {}, 3000);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch {
+      return [];
+    }
+  }
+
+  public subscribeControllerTrafficStream(
+    onMetric?: (summary: TrafficSummaryDto) => void,
+    onEvent?: (event: TrafficEventItemDto) => void,
+    onConnect?: (summary: TrafficSummaryDto) => void
+  ): () => void {
+    if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+      return () => {};
+    }
+    const base = this.controllerUrl;
+    const url = `${base}/api/v1/traffic/stream`;
+    let es: EventSource | null = null;
+    let isClosed = false;
+
+    try {
+      es = new EventSource(url);
+
+      es.addEventListener('connect', (e: MessageEvent) => {
+        if (!e.data || isClosed) return;
+        try {
+          const parsed = JSON.parse(e.data);
+          if (parsed && parsed.summary) {
+            if (onConnect) onConnect(parsed.summary);
+            if (onMetric) onMetric(parsed.summary);
+          }
+        } catch {
+          // ignore parse error
+        }
+      });
+
+      es.addEventListener('traffic_metric', (e: MessageEvent) => {
+        if (!e.data || isClosed) return;
+        try {
+          const parsed = JSON.parse(e.data);
+          if (parsed && onMetric) {
+            onMetric(parsed);
+          }
+        } catch {
+          // ignore parse error
+        }
+      });
+
+      es.addEventListener('traffic_event', (e: MessageEvent) => {
+        if (!e.data || isClosed) return;
+        try {
+          const parsed = JSON.parse(e.data);
+          if (parsed && onEvent) {
+            onEvent(parsed);
+          }
+        } catch {
+          // ignore parse error
+        }
+      });
+
+      es.onerror = () => {
+        // Browser EventSource automatically reconnects
+      };
+    } catch {
+      // EventSource initialization failed
+    }
+
+    return () => {
+      isClosed = true;
+      if (es) {
+        es.close();
+        es = null;
+      }
+    };
   }
 }
 

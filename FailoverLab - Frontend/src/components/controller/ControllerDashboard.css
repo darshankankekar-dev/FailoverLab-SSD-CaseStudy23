@@ -1,0 +1,719 @@
+/* =========================================================================
+   FailoverLab Controller Operations Console - Stylesheet
+   Designed for High-Reliability Distributed Systems Engineering
+   ========================================================================= */
+
+.controller-app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+/* -------------------------------------------------------------------------
+   Operations Header Cockpit
+   ------------------------------------------------------------------------- */
+.controller-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1.25rem;
+  background: rgba(16, 20, 30, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border-default);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  gap: 1rem;
+}
+
+.controller-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.controller-logo-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-focus);
+  color: var(--status-flow);
+}
+
+.controller-brand-title {
+  display: flex;
+  flex-direction: column;
+}
+
+.controller-brand-heading {
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-bright);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.controller-brand-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-xs);
+  background: rgba(14, 165, 233, 0.2);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.4);
+  text-transform: uppercase;
+}
+
+.controller-brand-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.controller-header-center {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.controller-vitals-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.65rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+}
+
+.controller-vitals-pill .label {
+  color: var(--text-muted);
+}
+
+.controller-vitals-pill .val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.controller-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* -------------------------------------------------------------------------
+   Navigation Tabs Bar
+   ------------------------------------------------------------------------- */
+.controller-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  overflow-x: auto;
+}
+
+.controller-tabs-list {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.controller-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.95rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.controller-nav-tab:hover {
+  color: var(--text-bright);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.controller-nav-tab.active {
+  color: #38bdf8;
+  border-bottom-color: #0ea5e9;
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.controller-nav-tab .tab-badge {
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-xs);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+}
+
+.controller-nav-tab.active .tab-badge {
+  background: rgba(14, 165, 233, 0.25);
+  color: #38bdf8;
+}
+
+/* -------------------------------------------------------------------------
+   Main Content Area
+   ------------------------------------------------------------------------- */
+.controller-main {
+  flex: 1;
+  padding: 1.25rem;
+  max-width: 1720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.controller-tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* -------------------------------------------------------------------------
+   Panels, Cards, and Section Layouts
+   ------------------------------------------------------------------------- */
+.ctrl-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.ctrl-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ctrl-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.ctrl-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ctrl-panel-body {
+  padding: 1rem;
+}
+
+/* -------------------------------------------------------------------------
+   Overview Cards & Vitals Grid
+   ------------------------------------------------------------------------- */
+.ctrl-vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.ctrl-vital-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.ctrl-vital-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--border-highlight);
+}
+
+.ctrl-vital-card.accent-flow::before { background: #0ea5e9; }
+.ctrl-vital-card.accent-healthy::before { background: #10b981; }
+.ctrl-vital-card.accent-warning::before { background: #f59e0b; }
+.ctrl-vital-card.accent-danger::before { background: #ef4444; }
+
+.ctrl-vital-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ctrl-vital-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+}
+
+.ctrl-vital-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-bright);
+  line-height: 1.2;
+}
+
+.ctrl-vital-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Five Regional Grid */
+.ctrl-regional-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.75rem;
+}
+
+.ctrl-region-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  transition: border-color 0.15s ease;
+}
+
+.ctrl-region-card:hover {
+  border-color: var(--border-highlight);
+}
+
+.ctrl-region-card.active-writer {
+  border-color: var(--status-flow);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.ctrl-region-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.ctrl-region-city {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.ctrl-region-code {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.ctrl-region-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+}
+
+.ctrl-region-meta-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.ctrl-region-meta-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.ctrl-region-meta-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* -------------------------------------------------------------------------
+   Network Traffic 4-Metric Grid
+   ------------------------------------------------------------------------- */
+.ctrl-traffic-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.ctrl-traffic-metric-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  position: relative;
+}
+
+.ctrl-traffic-metric-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ctrl-traffic-direction-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-xs);
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+
+.badge-customer-ingress {
+  background: rgba(14, 165, 233, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.35);
+}
+
+.badge-customer-egress {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-upstream-egress {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.badge-upstream-ingress {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.ctrl-traffic-metric-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+
+.ctrl-traffic-metric-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.ctrl-traffic-rate-val {
+  font-size: 1.6rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--text-bright);
+  letter-spacing: -0.02em;
+}
+
+.ctrl-traffic-cumulative-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+}
+
+/* -------------------------------------------------------------------------
+   SVG Time-Series Chart Container
+   ------------------------------------------------------------------------- */
+.ctrl-chart-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ctrl-chart-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ctrl-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.ctrl-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.ctrl-legend-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.ctrl-range-selector {
+  display: flex;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+
+.ctrl-range-btn {
+  background: transparent;
+  border: none;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+  transition: all 0.15s ease;
+}
+
+.ctrl-range-btn:hover {
+  color: var(--text-primary);
+}
+
+.ctrl-range-btn.active {
+  background: var(--bg-subtle);
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+.ctrl-svg-chart-wrapper {
+  position: relative;
+  width: 100%;
+  height: 260px;
+  background: #080a0f;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.ctrl-svg-chart {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* -------------------------------------------------------------------------
+   Data Tables (Regional, Live Inspector, Audit Trail)
+   ------------------------------------------------------------------------- */
+.ctrl-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.ctrl-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.8rem;
+}
+
+.ctrl-table th {
+  background: var(--bg-panel);
+  padding: 0.65rem 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+}
+
+.ctrl-table td {
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.ctrl-table tr:last-child td {
+  border-bottom: none;
+}
+
+.ctrl-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ctrl-table tr.active-row td {
+  background: rgba(14, 165, 233, 0.05);
+}
+
+/* -------------------------------------------------------------------------
+   Live Request Inspector Filter Bar
+   ------------------------------------------------------------------------- */
+.ctrl-inspector-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ctrl-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ctrl-filter-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ctrl-select {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  outline: none;
+  cursor: pointer;
+}
+
+.ctrl-select:focus {
+  border-color: #0ea5e9;
+}
+
+.ctrl-search-input {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  outline: none;
+  min-width: 180px;
+}
+
+.ctrl-search-input:focus {
+  border-color: #0ea5e9;
+}
+
+/* -------------------------------------------------------------------------
+   Status Badges and Pulse Indicators
+   ------------------------------------------------------------------------- */
+.pulse-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.pulse-indicator.pulse-green {
+  background-color: var(--status-healthy);
+}
+
+.pulse-indicator.pulse-yellow {
+  background-color: var(--status-warning);
+}
+
+.pulse-indicator.pulse-red {
+  background-color: var(--status-danger);
+}
+
+/* -------------------------------------------------------------------------
+   Responsive Breakpoints
+   ------------------------------------------------------------------------- */
+@media (max-width: 1440px) {
+  .ctrl-vitals-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .ctrl-traffic-metrics-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .ctrl-regional-cards-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+@media (max-width: 1200px) {
+  .ctrl-vitals-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ctrl-traffic-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ctrl-regional-cards-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 860px) {
+  .controller-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .controller-header-center {
+    justify-content: flex-start;
+  }
+  .ctrl-vitals-grid {
+    grid-template-columns: 1fr;
+  }
+  .ctrl-traffic-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+  .ctrl-regional-cards-grid {
+    grid-template-columns: 1fr;
+  }
+  .ctrl-chart-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+}

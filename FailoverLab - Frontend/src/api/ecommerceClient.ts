@@ -70,16 +70,17 @@ export interface ClientRegionOption {
   id: string;
   name: string;
   zone: string;
+  countryCode: string;
   flag: string;
   nominalLatency: string;
 }
 
 export const CLIENT_REGIONS: ClientRegionOption[] = [
-  { id: 'ap-south-1', name: 'India (Mumbai)', zone: 'ap-south-1', flag: '🇮🇳', nominalLatency: '15ms - 25ms' },
-  { id: 'ap-southeast-1', name: 'Southeast Asia (Singapore)', zone: 'ap-southeast-1', flag: '🇸🇬', nominalLatency: '35ms - 45ms' },
-  { id: 'eu-central-1', name: 'Europe (Frankfurt)', zone: 'eu-central-1', flag: '🇩🇪', nominalLatency: '110ms - 130ms' },
-  { id: 'us-east-1', name: 'North America (Virginia)', zone: 'us-east-1', flag: '🇺🇸', nominalLatency: '175ms - 210ms' },
-  { id: 'sa-east-1', name: 'South America (São Paulo)', zone: 'sa-east-1', flag: '🇧🇷', nominalLatency: '240ms - 290ms' },
+  { id: 'ap-south-1', name: 'India (Mumbai)', zone: 'ap-south-1', countryCode: 'IN', flag: 'IN', nominalLatency: '15ms - 25ms' },
+  { id: 'ap-southeast-1', name: 'Southeast Asia (Singapore)', zone: 'ap-southeast-1', countryCode: 'SG', flag: 'SG', nominalLatency: '35ms - 45ms' },
+  { id: 'eu-central-1', name: 'Europe (Frankfurt)', zone: 'eu-central-1', countryCode: 'DE', flag: 'DE', nominalLatency: '110ms - 130ms' },
+  { id: 'us-east-1', name: 'North America (Virginia)', zone: 'us-east-1', countryCode: 'US', flag: 'US', nominalLatency: '175ms - 210ms' },
+  { id: 'sa-east-1', name: 'South America (São Paulo)', zone: 'sa-east-1', countryCode: 'BR', flag: 'BR', nominalLatency: '240ms - 290ms' },
 ];
 
 export class RateLimitError extends Error {

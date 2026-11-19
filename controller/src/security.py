@@ -34,3 +34,24 @@ async def verify_admin_access(
             detail="Unauthorized: Valid X-Admin-Secret or X-Internal-Secret header required for administrative operations.",
         )
 
+
+async def verify_internal_secret(
+    x_internal_secret: Optional[str] = Header(None, alias="X-Internal-Secret"),
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """
+    Strictly verifies service-to-service internal authentication (X-Internal-Secret).
+    Always enforced for internal ingestion pipelines regardless of environment mode.
+    """
+    token = x_internal_secret
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+
+    expected = settings.internal_api_secret
+    if not token or token != expected:
+        logger.warning("Rejected unauthorized request to internal telemetry ingestion endpoint.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized: Valid X-Internal-Secret header required for internal telemetry ingestion.",
+        )
+

@@ -18,6 +18,7 @@ interface ShopHeaderProps {
   cartCount: number;
   onOpenCart: () => void;
   onNavigateToConsole: () => void;
+  onNavigateToController?: () => void;
   selectedCategory: string;
   onSelectCategory: (cat: string) => void;
   searchQuery: string;
@@ -33,6 +34,7 @@ export const ShopHeader: React.FC<ShopHeaderProps> = ({
   cartCount,
   onOpenCart,
   onNavigateToConsole,
+  onNavigateToController,
   selectedCategory,
   onSelectCategory,
   searchQuery,
@@ -66,7 +68,7 @@ export const ShopHeader: React.FC<ShopHeaderProps> = ({
                 title="Change your simulated customer browsing location"
               >
                 <Globe size={13} className="text-flow" />
-                <span className="region-flag">{currentRegion.flag}</span>
+                <span className="region-flag font-mono font-semibold">[{currentRegion.countryCode || currentRegion.flag}]</span>
                 <span className="region-name">{currentRegion.name}</span>
                 <ChevronDown size={12} className={`chevron-icon ${isRegionMenuOpen ? 'open' : ''}`} />
               </button>
@@ -87,7 +89,7 @@ export const ShopHeader: React.FC<ShopHeaderProps> = ({
                         setIsRegionMenuOpen(false);
                       }}
                     >
-                      <span className="option-flag">{reg.flag}</span>
+                      <span className="option-flag font-mono font-bold">[{reg.countryCode || reg.flag}]</span>
                       <div className="option-info">
                         <span className="option-name">{reg.name}</span>
                         <span className="option-latency font-mono">{reg.zone} • ~{reg.nominalLatency}</span>
@@ -110,6 +112,20 @@ export const ShopHeader: React.FC<ShopHeaderProps> = ({
               <span>Route Telemetry</span>
             </button>
 
+            {/* Link to Controller Console */}
+            {onNavigateToController && (
+              <button
+                type="button"
+                className="shop-pill-btn"
+                style={{ background: 'rgba(14, 165, 233, 0.2)', borderColor: '#0284c7', color: '#38bdf8' }}
+                onClick={onNavigateToController}
+                title="Open Controller Observability Console"
+              >
+                <Sliders size={13} />
+                <span>Controller Console</span>
+              </button>
+            )}
+
             {/* Link to Root Operations Dashboard */}
             <button
               type="button"
@@ -129,11 +145,11 @@ export const ShopHeader: React.FC<ShopHeaderProps> = ({
         <div className="shop-container shop-nav-inner">
           <div className="shop-brand">
             <div className="brand-logo-mark">
-              <ShoppingBag size={20} className="brand-icon" />
+              <ShoppingBag size={18} className="brand-icon" />
             </div>
             <div className="brand-titles">
               <h1 className="brand-name">AuraStore</h1>
-              <span className="brand-tagline">High-Availability Retail</span>
+              <span className="brand-tagline">Infrastructure & Hardware Gear</span>
             </div>
           </div>
 

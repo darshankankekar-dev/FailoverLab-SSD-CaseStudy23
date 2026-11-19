@@ -81,7 +81,7 @@ export const OrderConfirmationView: React.FC<OrderConfirmationViewProps> = ({
             </div>
             <div className="receipt-meta-item">
               <span className="meta-label">Client Location</span>
-              <span className="meta-val">{clientReg.flag} {clientReg.name}</span>
+              <span className="meta-val">[{clientReg.flag}] {clientReg.name}</span>
             </div>
             <div className="receipt-meta-item">
               <span className="meta-label">Order Status</span>

@@ -140,3 +140,46 @@ class TransitionIntentEntity(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+
+class TrafficSampleEntity(Base):
+    __tablename__ = "traffic_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    gateway_instance_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    interval_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+
+    # Customer-facing cumulative payload bytes and rates
+    client_ingress_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    client_egress_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    client_ingress_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    client_egress_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # Upstream regional cumulative payload bytes and rates
+    upstream_ingress_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    upstream_egress_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    upstream_ingress_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    upstream_egress_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # Request and status metrics
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    request_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    status_2xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_3xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_4xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status_5xx: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    rate_limited_429: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Latencies
+    latency_avg_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    latency_p50_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    latency_p95_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    latency_p99_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # JSON breakdowns
+    regional_traffic_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    traffic_sources_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    dropped_telemetry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
+

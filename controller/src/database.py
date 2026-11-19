@@ -54,10 +54,18 @@ async def init_db() -> None:
         # Ensure schema compatibility for pre-existing database volumes
         try:
             from sqlalchemy import text
-            await conn.execute(text("ALTER TABLE regions ADD COLUMN IF NOT EXISTS applied_sequence INTEGER NOT NULL DEFAULT 0;"))
-            await conn.execute(text("ALTER TABLE regions ADD COLUMN IF NOT EXISTS replication_lag_seconds FLOAT NOT NULL DEFAULT 0.8;"))
-        except Exception:
-            pass
+            if "sqlite" in str(engine.url):
+                cols_res = await conn.execute(text("PRAGMA table_info(regions);"))
+                col_names = {row[1] for row in cols_res.fetchall()}
+                if "applied_sequence" not in col_names:
+                    await conn.execute(text("ALTER TABLE regions ADD COLUMN applied_sequence INTEGER NOT NULL DEFAULT 0;"))
+                if "replication_lag_seconds" not in col_names:
+                    await conn.execute(text("ALTER TABLE regions ADD COLUMN replication_lag_seconds FLOAT NOT NULL DEFAULT 0.8;"))
+            else:
+                await conn.execute(text("ALTER TABLE regions ADD COLUMN IF NOT EXISTS applied_sequence INTEGER NOT NULL DEFAULT 0;"))
+                await conn.execute(text("ALTER TABLE regions ADD COLUMN IF NOT EXISTS replication_lag_seconds FLOAT NOT NULL DEFAULT 0.8;"))
+        except Exception as e:
+            logger.debug(f"Schema compatibility notice: {e}")
 
     async with AsyncSessionLocal() as session:
         async with session.begin():

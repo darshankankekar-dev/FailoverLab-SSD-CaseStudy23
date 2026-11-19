@@ -7,12 +7,12 @@ interface RegionalComparisonTableProps {
   measuredLatencies?: Record<string, number>;
 }
 
-const REGION_INFO: Record<string, { name: string; flag: string; zone: string; nominalWan: number }> = {
-  'region-a': { name: 'Mumbai', flag: '🇮🇳', zone: 'ap-south-1', nominalWan: 24 },
-  'region-b': { name: 'Singapore', flag: '🇸🇬', zone: 'ap-southeast-1', nominalWan: 42 },
-  'region-c': { name: 'Frankfurt', flag: '🇩🇪', zone: 'eu-central-1', nominalWan: 110 },
-  'region-d': { name: 'Virginia', flag: '🇺🇸', zone: 'us-east-1', nominalWan: 180 },
-  'region-e': { name: 'São Paulo', flag: '🇧🇷', zone: 'sa-east-1', nominalWan: 270 },
+const REGION_INFO: Record<string, { name: string; code: string; zone: string; nominalWan: number }> = {
+  'region-a': { name: 'Mumbai', code: 'IN', zone: 'ap-south-1', nominalWan: 24 },
+  'region-b': { name: 'Singapore', code: 'SG', zone: 'ap-southeast-1', nominalWan: 42 },
+  'region-c': { name: 'Frankfurt', code: 'DE', zone: 'eu-central-1', nominalWan: 110 },
+  'region-d': { name: 'Virginia', code: 'US', zone: 'us-east-1', nominalWan: 180 },
+  'region-e': { name: 'São Paulo', code: 'BR', zone: 'sa-east-1', nominalWan: 270 },
 };
 
 export const RegionalComparisonTable: React.FC<RegionalComparisonTableProps> = ({
@@ -112,7 +112,7 @@ export const RegionalComparisonTable: React.FC<RegionalComparisonTableProps> = (
                   {/* Region / Location */}
                   <td>
                     <div className="flex items-center gap-2">
-                      <span>{info.flag}</span>
+                      <span className="font-mono text-xs text-muted" style={{ fontWeight: 700 }}>[{info.code}]</span>
                       <span className="font-semibold">{info.name}</span>
                       <span className="region-code-badge">{rid}</span>
                     </div>

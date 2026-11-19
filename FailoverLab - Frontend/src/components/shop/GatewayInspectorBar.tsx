@@ -33,7 +33,7 @@ export const GatewayInspectorBar: React.FC<GatewayInspectorBarProps> = ({
           title="Toggle Gateway Telemetry Inspector"
         >
           <Activity size={13} className="text-flow" />
-          <span className="font-mono text-xs">Gateway Ready • {clientReg.flag} {clientReg.name}</span>
+          <span className="font-mono text-xs">Gateway Ready • [{clientReg.flag}] {clientReg.name}</span>
           {isOpen ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
         </button>
       </aside>
@@ -93,7 +93,7 @@ export const GatewayInspectorBar: React.FC<GatewayInspectorBarProps> = ({
 
             <div className="stat-item">
               <span className="stat-label">Client Location</span>
-              <span className="stat-val font-mono">{clientReg.flag} {clientReg.zone}</span>
+              <span className="stat-val font-mono">[{clientReg.flag}] {clientReg.zone}</span>
             </div>
 
             <div className="stat-item full-row">

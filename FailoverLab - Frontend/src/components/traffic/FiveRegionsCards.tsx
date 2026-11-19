@@ -9,13 +9,13 @@ interface FiveRegionsCardsProps {
 
 const REGION_METADATA: Record<
   string,
-  { name: string; location: string; flag: string; zone: string; nominalWanMs: number }
+  { name: string; location: string; code: string; zone: string; nominalWanMs: number }
 > = {
-  'region-a': { name: 'Mumbai', location: 'India', flag: '🇮🇳', zone: 'ap-south-1', nominalWanMs: 24 },
-  'region-b': { name: 'Singapore', location: 'Singapore', flag: '🇸🇬', zone: 'ap-southeast-1', nominalWanMs: 42 },
-  'region-c': { name: 'Frankfurt', location: 'Germany', flag: '🇩🇪', zone: 'eu-central-1', nominalWanMs: 110 },
-  'region-d': { name: 'Virginia', location: 'USA', flag: '🇺🇸', zone: 'us-east-1', nominalWanMs: 180 },
-  'region-e': { name: 'São Paulo', location: 'Brazil', flag: '🇧🇷', zone: 'sa-east-1', nominalWanMs: 270 },
+  'region-a': { name: 'Mumbai', location: 'India', code: 'IN', zone: 'ap-south-1', nominalWanMs: 24 },
+  'region-b': { name: 'Singapore', location: 'Singapore', code: 'SG', zone: 'ap-southeast-1', nominalWanMs: 42 },
+  'region-c': { name: 'Frankfurt', location: 'Germany', code: 'DE', zone: 'eu-central-1', nominalWanMs: 110 },
+  'region-d': { name: 'Virginia', location: 'USA', code: 'US', zone: 'us-east-1', nominalWanMs: 180 },
+  'region-e': { name: 'São Paulo', location: 'Brazil', code: 'BR', zone: 'sa-east-1', nominalWanMs: 270 },
 };
 
 export const FiveRegionsCards: React.FC<FiveRegionsCardsProps> = ({
@@ -92,7 +92,7 @@ export const FiveRegionsCards: React.FC<FiveRegionsCardsProps> = ({
               <div className="region-card-top">
                 <div className="region-identity">
                   <div className="region-name-row">
-                    <span className="text-lg">{meta.flag}</span>
+                    <span className="font-mono text-xs" style={{ fontWeight: 700, color: 'var(--text-muted)' }}>[{meta.code}]</span>
                     <span className="region-name">{meta.name}</span>
                     <span className="region-code-badge">{rid}</span>
                   </div>

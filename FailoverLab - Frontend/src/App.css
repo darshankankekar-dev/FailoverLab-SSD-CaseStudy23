@@ -390,32 +390,21 @@
   align-items: center;
   justify-content: space-between;
   padding: 0.35rem 0.5rem;
-  background: rgba(14, 165, 233, 0.05);
-  border: 1px dashed rgba(14, 165, 233, 0.3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs);
 }
 
 .vector-line {
   flex: 1;
-  height: 2px;
-  background: rgba(14, 165, 233, 0.3);
+  height: 1px;
+  background: var(--border-default);
   margin: 0 0.75rem;
   position: relative;
 }
 
 .vector-pulse {
-  position: absolute;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--status-flow);
-  top: -2px;
-  animation: moveVector 2s infinite linear;
-}
-
-@keyframes moveVector {
-  0% { left: 0%; }
-  100% { left: 95%; }
+  display: none;
 }
 
 .preview-bottom-bar {
@@ -947,8 +936,8 @@
 }
 
 .node-selected rect {
-  stroke-width: 2.5px;
-  filter: drop-shadow(0 0 6px rgba(14, 165, 233, 0.5));
+  stroke: var(--status-flow);
+  stroke-width: 2px;
 }
 
 .legend-divider-vertical {
@@ -966,7 +955,7 @@
 }
 
 .legend-line-solid {
-  background: #0ea5e9;
+  background: var(--status-flow);
 }
 
 .legend-line-dashed {
@@ -976,8 +965,8 @@
 }
 
 .legend-line-rep {
-  background: #818cf8;
-  height: 3px;
+  background: #64748b;
+  height: 2px;
 }
 
 .diagram-blocked-banner {
