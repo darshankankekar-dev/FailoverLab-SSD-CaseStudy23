@@ -29,6 +29,7 @@ class RecordResponse(BaseModel):
 class RegionalStatusResponse(BaseModel):
     region_id: str
     region_name: str
+    name: Optional[str] = None
     cloud_zone: str
     role: str
     health: str
@@ -38,18 +39,24 @@ class RegionalStatusResponse(BaseModel):
     total_records: int
     outbox_events_count: int
     last_outbox_sequence_id: int
+    applied_sequence: int = 0
+    replication_lag_seconds: float = 0.0
 
 
 class OutboxEventResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     sequence_id: int
+    sequence_number: Optional[int] = None
     event_id: str
     record_key: str
     operation: str
     payload: Dict[str, Any]
+    payload_hash: Optional[str] = None
     version: int
     fencing_epoch: int
+    source_fencing_epoch: Optional[int] = None
+    source_region_id: Optional[str] = None
     created_at: datetime
     replicated: bool
 
@@ -64,13 +71,17 @@ class OutboxBatchResponse(BaseModel):
 class ReplicationEventPayload(BaseModel):
     event_id: str
     source_sequence_id: int
+    sequence_number: Optional[int] = None
     record_key: str
     operation: str
     payload: Dict[str, Any]
+    payload_hash: Optional[str] = None
     version: int
     fencing_epoch: int
-    source_region: str
-    created_at: str
+    source_fencing_epoch: Optional[int] = None
+    source_region: Optional[str] = None
+    source_region_id: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class ReplicationApplyRequest(BaseModel):
@@ -84,6 +95,15 @@ class ReplicationApplyResponse(BaseModel):
     skipped_duplicates: int
     highest_sequence_id: int
     message: str
+
+
+class CheckpointResponse(BaseModel):
+    region_id: str
+    region_name: str
+    role: str
+    last_applied_sequence_id: int
+    total_applied_events: int
+    fencing_epoch: int
 
 
 class FenceRequest(BaseModel):

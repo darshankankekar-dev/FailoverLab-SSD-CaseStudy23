@@ -18,9 +18,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Regional identity
-    region_id: str = Field(default="region-a", description="'region-a' or 'region-b'")
-    region_name: str = Field(default="Mumbai", description="'Mumbai' or 'Singapore'")
-    cloud_zone: str = Field(default="ap-south-1", description="'ap-south-1' or 'ap-southeast-1'")
+    region_id: str = Field(default="region-a", description="Region identifier (e.g. region-a through region-e)")
+    region_name: str = Field(default="Mumbai", description="Regional geographical name (e.g. Mumbai, Singapore, Frankfurt, Virginia, São Paulo)")
+    cloud_zone: str = Field(default="ap-south-1", description="Cloud zone identifier (e.g. ap-south-1, ap-southeast-1, eu-central-1, us-east-1, sa-east-1)")
     initial_role: str = Field(default="ACTIVE", description="'ACTIVE' or 'STANDBY'")
     initial_epoch: int = Field(default=101, description="Monotonically increasing generation epoch")
 

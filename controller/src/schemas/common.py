@@ -19,6 +19,9 @@ class ControllerState(str, enum.Enum):
 class RegionId(str, enum.Enum):
     REGION_A = "region-a"
     REGION_B = "region-b"
+    REGION_C = "region-c"
+    REGION_D = "region-d"
+    REGION_E = "region-e"
 
 
 class RegionRole(str, enum.Enum):

@@ -1,7 +1,10 @@
+from typing import Optional
+import httpx
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ...database import get_db_session
+from ...config import Settings
 from ...models import (
     RegionEntity,
     ReplicationEntity,
@@ -11,8 +14,11 @@ from ...models import (
 )
 from ...schemas import StateResponse
 from ...services import log_audit_event, get_full_state
+from ...services.clients import replication_client
+from ...domain.registry import REGION_REGISTRY
 
 router = APIRouter(prefix="/chaos", tags=["Internal Chaos"])
+settings = Settings()
 
 
 @router.post("/primary-outage", response_model=StateResponse)
@@ -105,6 +111,9 @@ async def inject_replication_lag(
     rep.lag_seconds = lag_seconds
     rep.lag_ms = int(lag_seconds * 1000)
 
+    # Forward to replication worker
+    await replication_client.set_delay(lag_seconds)
+
     res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
     c_state = res_state.scalar_one()
 
@@ -158,5 +167,187 @@ async def inject_route_failure(session: AsyncSession = Depends(get_db_session)) 
         simulated_time_seconds=c_state.simulated_time_seconds,
     )
     await session.commit()
+    return await get_full_state(session)
+
+
+@router.post("/regional-lag", response_model=StateResponse)
+async def inject_regional_lag(
+    region_id: str = Query(..., description="Target region ID"),
+    lag_seconds: float = Query(default=8.4, ge=0.0, le=60.0),
+    session: AsyncSession = Depends(get_db_session),
+) -> StateResponse:
+    """Sets replication lag for a specific region."""
+    res = await session.execute(select(RegionEntity).where(RegionEntity.id == region_id))
+    reg = res.scalar_one_or_none()
+    if reg:
+        reg.replication_lag_seconds = lag_seconds
+        await session.commit()
+
+    # Forward to replication worker selectively
+    await replication_client.set_delay(lag_seconds, destination=region_id)
+
+    return await get_full_state(session)
+
+
+@router.post("/regional-health", response_model=StateResponse)
+async def inject_regional_health(
+    region_id: str = Query(..., description="Target region ID"),
+    health: str = Query(default="HEALTHY", description="HEALTHY, DEGRADED, or DOWN"),
+    session: AsyncSession = Depends(get_db_session),
+) -> StateResponse:
+    """Sets health status for a specific region."""
+    res = await session.execute(select(RegionEntity).where(RegionEntity.id == region_id))
+    reg = res.scalar_one_or_none()
+    if reg:
+        reg.health = health.upper()
+        if health.upper() == "DOWN":
+            reg.status = "DOWN"
+            reg.app_servers_healthy = 0
+        else:
+            reg.status = "healthy"
+            reg.app_servers_healthy = reg.app_servers_total
+        await session.commit()
+    return await get_full_state(session)
+
+
+@router.post("/regional-sequence", response_model=StateResponse)
+async def inject_regional_sequence(
+    region_id: str = Query(..., description="Target region ID"),
+    applied_sequence: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_db_session),
+) -> StateResponse:
+    """Sets applied replication sequence for a specific region."""
+    res = await session.execute(select(RegionEntity).where(RegionEntity.id == region_id))
+    reg = res.scalar_one_or_none()
+    if reg:
+        reg.applied_sequence = applied_sequence
+        await session.commit()
+    return await get_full_state(session)
+
+
+@router.post("/replication-pause", response_model=StateResponse)
+async def pause_replication_target(
+    destination: Optional[str] = Query(None, description="Optional target destination region (e.g., 'region-b')"),
+    session: AsyncSession = Depends(get_db_session),
+) -> StateResponse:
+    """Pauses replication globally or to a specific target standby region."""
+    res_rep = await session.execute(select(ReplicationEntity).where(ReplicationEntity.id == 1))
+    rep = res_rep.scalar_one_or_none()
+    if rep:
+        rep.status = "DEGRADED"
+
+    # Forward to replication worker if reachable
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            url = f"{settings.replication_worker_url}/controls/pause"
+            if destination:
+                url = f"{url}?destination={destination}"
+            await client.post(url)
+    except Exception:
+        pass
+
+    target_desc = f"target '{destination}'" if destination else "all destinations"
+    res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
+    c_state = res_state.scalar_one()
+    await log_audit_event(
+        session,
+        severity="warn",
+        subsystem="REPLICATION",
+        reason=f"Replication paused for {target_desc} via administrative chaos panel.",
+        simulated_time_seconds=c_state.simulated_time_seconds,
+    )
+    await session.commit()
+    return await get_full_state(session)
+
+
+@router.post("/replication-resume", response_model=StateResponse)
+async def resume_replication_target(
+    destination: Optional[str] = Query(None, description="Optional target destination region (e.g., 'region-b')"),
+    session: AsyncSession = Depends(get_db_session),
+) -> StateResponse:
+    """Resumes replication globally or to a specific target standby region."""
+    res_rep = await session.execute(select(ReplicationEntity).where(ReplicationEntity.id == 1))
+    rep = res_rep.scalar_one_or_none()
+    if rep:
+        rep.status = "STREAMING"
+
+    # Forward to replication worker if reachable
+    try:
+        async with httpx.AsyncClient(timeout=1.0) as client:
+            url = f"{settings.replication_worker_url}/controls/resume"
+            if destination:
+                url = f"{url}?destination={destination}"
+            await client.post(url)
+    except Exception:
+        pass
+
+    target_desc = f"target '{destination}'" if destination else "all destinations"
+    res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
+    c_state = res_state.scalar_one()
+    await log_audit_event(
+        session,
+        severity="info",
+        subsystem="REPLICATION",
+        reason=f"Replication resumed for {target_desc} via administrative chaos panel.",
+        simulated_time_seconds=c_state.simulated_time_seconds,
+    )
+    await session.commit()
+    return await get_full_state(session)
+
+
+@router.post("/regional-wan-latency", response_model=StateResponse)
+async def configure_regional_wan_latency(
+    region_id: str = Query(..., description="Target region ID"),
+    latency_ms: int = Query(default=30, ge=1, le=2000),
+    session: AsyncSession = Depends(get_db_session),
+) -> StateResponse:
+    """Configures simulated WAN latency for a specific region."""
+    res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
+    c_state = res_state.scalar_one()
+    await log_audit_event(
+        session,
+        severity="info",
+        subsystem="NETWORK",
+        reason=f"Simulated WAN latency for {region_id} configured to {latency_ms}ms.",
+        simulated_time_seconds=c_state.simulated_time_seconds,
+    )
+    await session.commit()
+    return await get_full_state(session)
+
+
+@router.post("/reset-regional", response_model=StateResponse)
+async def reset_regional_health(
+    region_id: str = Query(..., description="Target region ID to restore"),
+    session: AsyncSession = Depends(get_db_session),
+) -> StateResponse:
+    """Restores a single region back to baseline health, lag, and sequence."""
+    res = await session.execute(select(RegionEntity).where(RegionEntity.id == region_id))
+    reg = res.scalar_one_or_none()
+    if reg:
+        reg.health = "HEALTHY"
+        reg.status = "healthy"
+        reg.app_servers_healthy = reg.app_servers_total
+        reg.replication_lag_seconds = 0.8
+        reg_def = REGION_REGISTRY.get(region_id)
+        if reg_def:
+            reg.iops = reg_def.baseline_iops
+
+        # If replication worker reachable, resume replication
+        try:
+            async with httpx.AsyncClient(timeout=1.0) as client:
+                await client.post(f"{settings.replication_worker_url}/controls/resume?destination={region_id}")
+        except Exception:
+            pass
+
+        res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
+        c_state = res_state.scalar_one()
+        await log_audit_event(
+            session,
+            severity="info",
+            subsystem="CHAOS",
+            reason=f"Region {region_id} restored to healthy baseline.",
+            simulated_time_seconds=c_state.simulated_time_seconds,
+        )
+        await session.commit()
     return await get_full_state(session)
 

@@ -1,18 +1,20 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union, Literal
 from pydantic import BaseModel, Field
 from .common import ControllerState, TransitionStatus, RegionId
 
 
 class FailoverRequest(BaseModel):
     force: bool = Field(default=False, description="Manual override bypass for drill execution")
-    target_region: Optional[RegionId] = Field(default=RegionId.REGION_B, description="Desired destination region")
+    target_region: Optional[Union[RegionId, Literal["auto"], str]] = Field(
+        default="auto", description="Desired destination region, or 'auto' for dynamic candidate selection"
+    )
     reason: Optional[str] = Field(default="Manual operator drill or failover trigger")
 
 
 class FailbackRequest(BaseModel):
     operator_id: str = Field(..., description="Operator identifier authorizing guarded failback")
     confirmation: bool = Field(..., description="Explicit confirmation of deliberate failback")
-    target_region: Optional[RegionId] = Field(default=RegionId.REGION_A, description="Original primary region")
+    target_region: Optional[Union[RegionId, str]] = Field(default=RegionId.REGION_A, description="Original primary region")
     reason: Optional[str] = Field(default="Guarded failback after data reconciliation")
 
 

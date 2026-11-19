@@ -89,3 +89,70 @@ async def test_apply_replication_batch_idempotency(client):
     list_resp = await client.get("/api/records")
     assert len(list_resp.json()) == 2
 
+
+@pytest.mark.asyncio
+async def test_apply_replication_rejects_out_of_order_and_corrupt_payload(client):
+    # 1. Non-monotonic batch (seq 5 followed by seq 3)
+    bad_batch = {
+        "source_region": "region-a",
+        "events": [
+            {
+                "event_id": "evt-seq-5",
+                "source_sequence_id": 5,
+                "record_key": "k-5",
+                "operation": "INSERT",
+                "payload": {"v": 5},
+                "version": 1,
+                "fencing_epoch": 101,
+                "source_region": "region-a",
+                "created_at": "2026-11-01T15:00:05Z",
+            },
+            {
+                "event_id": "evt-seq-3",
+                "source_sequence_id": 3,
+                "record_key": "k-3",
+                "operation": "INSERT",
+                "payload": {"v": 3},
+                "version": 1,
+                "fencing_epoch": 101,
+                "source_region": "region-a",
+                "created_at": "2026-11-01T15:00:03Z",
+            },
+        ],
+    }
+    resp = await client.post("/internal/replication/apply", json=bad_batch)
+    assert resp.status_code == 400
+    assert "Out-of-order" in resp.json()["detail"]
+
+    # 2. Corrupt payload hash
+    corrupt_batch = {
+        "source_region": "region-a",
+        "events": [
+            {
+                "event_id": "evt-corrupt",
+                "source_sequence_id": 10,
+                "record_key": "k-10",
+                "operation": "INSERT",
+                "payload": {"v": 10},
+                "payload_hash": "bad-hash-000000000000000000000000000000000000000000000000000000000000",
+                "version": 1,
+                "fencing_epoch": 101,
+                "source_region": "region-a",
+                "created_at": "2026-11-01T15:00:10Z",
+            }
+        ],
+    }
+    corrupt_resp = await client.post("/internal/replication/apply", json=corrupt_batch)
+    assert corrupt_resp.status_code == 400
+    assert "Payload corruption" in corrupt_resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_replication_checkpoint_endpoint(client):
+    chk_resp = await client.get("/internal/replication/checkpoint")
+    assert chk_resp.status_code == 200
+    data = chk_resp.json()
+    assert "last_applied_sequence_id" in data
+    assert "region_id" in data
+
+

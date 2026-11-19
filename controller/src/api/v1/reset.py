@@ -12,7 +12,8 @@ from ...models import (
     RouteEntity,
     QuorumVoterEntity,
 )
-from ...services import log_audit_event, get_full_state
+from ...domain.registry import REGION_REGISTRY
+from ...services import log_audit_event, get_full_state, traffic_service
 from ...services.metrics_tracker import metrics_tracker
 from ...services.clients import regional_client, gateway_client
 from ...security import verify_admin_access
@@ -27,33 +28,21 @@ async def reset_simulation(
     session: AsyncSession = Depends(get_db_session),
 ) -> StateResponse:
     """Resets all entities, metrics, epochs, and routes back to the initial baseline."""
-    # 1. Reset Region A
-    res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
-    region_a = res_a.scalar_one()
-    region_a.role = "ACTIVE"
-    region_a.health = "HEALTHY"
-    region_a.status = "healthy"
-    region_a.accepts_writes = True
-    region_a.ingress_traffic_percent = 100
-    region_a.ingress_rps = 2450
-    region_a.active_connections = 2450
-    region_a.iops = 4800
-    region_a.fencing_epoch = 101
-    region_a.is_fenced = False
-
-    # 2. Reset Region B
-    res_b = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-b"))
-    region_b = res_b.scalar_one()
-    region_b.role = "STANDBY"
-    region_b.health = "HEALTHY"
-    region_b.status = "healthy"
-    region_b.accepts_writes = False
-    region_b.ingress_traffic_percent = 0
-    region_b.ingress_rps = 0
-    region_b.active_connections = 0
-    region_b.iops = 120
-    region_b.fencing_epoch = 101
-    region_b.is_fenced = False
+    # 1. Reset All Configured Regions
+    res_regions = await session.execute(select(RegionEntity))
+    for region in res_regions.scalars().all():
+        is_active = (region.id == "region-a")
+        region.role = "ACTIVE" if is_active else "STANDBY"
+        region.health = "HEALTHY"
+        region.status = "healthy"
+        region.accepts_writes = is_active
+        region.ingress_traffic_percent = 100 if is_active else 0
+        region.ingress_rps = 2450 if is_active else 0
+        region.active_connections = 2450 if is_active else 0
+        r_def = REGION_REGISTRY.get(region.id)
+        region.iops = r_def.baseline_iops if r_def else (4800 if is_active else 120)
+        region.fencing_epoch = 101
+        region.is_fenced = False
 
     # 3. Reset Replication
     res_rep = await session.execute(select(ReplicationEntity).where(ReplicationEntity.id == 1))
@@ -103,10 +92,14 @@ async def reset_simulation(
         policy.acceptable_replication_lag_sec = 5.0
         policy.auto_failover_enabled = True
 
+    # Reset traffic service in-memory buffers
+    traffic_service.reset()
+
     # 8. Synchronize regional services and gateway
     try:
         await regional_client.promote("region-a", epoch=101)
-        await regional_client.demote("region-b", epoch=101)
+        for rid in ["region-b", "region-c", "region-d", "region-e"]:
+            await regional_client.demote(rid, epoch=101)
         await gateway_client.update_route(
             target_region="region-a",
             ttl=2,

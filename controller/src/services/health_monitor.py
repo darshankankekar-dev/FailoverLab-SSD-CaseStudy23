@@ -16,8 +16,8 @@ logger = logging.getLogger("controller.services.health_monitor")
 
 async def evaluate_primary_health_probes(session: AsyncSession, simulated_time_delta: float = 2.0) -> None:
     """
-    Evaluates health checks for Region A and debounces consecutive failures.
-    Suppresses false-positives if health returns before threshold.
+    Evaluates health checks for the currently active primary region (default Region A)
+    and debounces consecutive failures. Suppresses false-positives if health returns before threshold.
     """
     res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
     c_state = res_state.scalar_one()
@@ -25,8 +25,14 @@ async def evaluate_primary_health_probes(session: AsyncSession, simulated_time_d
     res_policy = await session.execute(select(PolicyEntity).where(PolicyEntity.id == 1))
     policy = res_policy.scalar_one()
 
-    res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
-    region_a = res_a.scalar_one()
+    # Generalize primary health monitoring to the currently active region
+    primary_id = c_state.active_region or "region-a"
+    res_primary = await session.execute(select(RegionEntity).where(RegionEntity.id == primary_id))
+    primary_region = res_primary.scalar_one_or_none()
+    if not primary_region:
+        res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
+        primary_region = res_a.scalar_one()
+        primary_id = "region-a"
 
     res_voters = await session.execute(select(QuorumVoterEntity))
     voters = list(res_voters.scalars().all())
@@ -34,9 +40,11 @@ async def evaluate_primary_health_probes(session: AsyncSession, simulated_time_d
     c_state.simulated_time_seconds += simulated_time_delta
     c_state.last_health_check_sim_time = c_state.simulated_time_seconds
 
-    # Real or simulated probe to Region A
-    probe = await regional_client.get_health("region-a")
-    is_failing = (region_a.health != "HEALTHY") or (probe.get("status") == "DOWN")
+    # Real or simulated probe to the currently active primary region
+    probe = await regional_client.get_health(primary_id)
+    is_failing = (primary_region.health != "HEALTHY") or (probe.get("status") == "DOWN")
+
+    region_label = "Region A" if primary_id == "region-a" else f"{primary_region.name} ({primary_id})"
 
     if not is_failing:
         # False-positive recovery check:
@@ -51,7 +59,7 @@ async def evaluate_primary_health_probes(session: AsyncSession, simulated_time_d
                 session,
                 severity="success",
                 subsystem="SAFETY_GATE",
-                reason=f"False Positive Suppressed: Region A probe succeeded before failure threshold ({failures}/{policy.failure_threshold_consecutive}). Restored to HEALTHY without failover.",
+                reason=f"False Positive Suppressed: {region_label} probe succeeded before failure threshold ({failures}/{policy.failure_threshold_consecutive}). Restored to HEALTHY without failover.",
                 simulated_time_seconds=c_state.simulated_time_seconds,
                 transition=f"{prev} -> HEALTHY",
             )
@@ -67,8 +75,8 @@ async def evaluate_primary_health_probes(session: AsyncSession, simulated_time_d
         c_state.consecutive_failures += 1
         failures = c_state.consecutive_failures
         logger.warning(
-            f"[HEALTH_PROBE_FAILED] Region A probe failed ({failures}/{policy.failure_threshold_consecutive})",
-            extra={"consecutive_failures": failures, "threshold": policy.failure_threshold_consecutive}
+            f"[HEALTH_PROBE_FAILED] {region_label} probe failed ({failures}/{policy.failure_threshold_consecutive})",
+            extra={"consecutive_failures": failures, "threshold": policy.failure_threshold_consecutive, "primary_region": primary_id}
         )
 
         if failures < policy.failure_threshold_consecutive:
@@ -77,7 +85,7 @@ async def evaluate_primary_health_probes(session: AsyncSession, simulated_time_d
                 session,
                 severity="warn",
                 subsystem="CONTROLLER",
-                reason=f"Synthetic health probe failed ({failures}/{policy.failure_threshold_consecutive}). Region A suspected. Holding in debounce window to filter transient jitter.",
+                reason=f"Synthetic health probe failed ({failures}/{policy.failure_threshold_consecutive}). {region_label} suspected. Holding in debounce window to filter transient jitter.",
                 simulated_time_seconds=c_state.simulated_time_seconds,
                 transition="HEALTHY -> PRIMARY_SUSPECTED" if failures == 1 else None,
             )
@@ -86,8 +94,8 @@ async def evaluate_primary_health_probes(session: AsyncSession, simulated_time_d
             c_state.current_state = "QUORUM_CHECK"
             metrics_tracker.record_outage_detected()
             logger.critical(
-                f"[OUTAGE_CONFIRMED] Consecutive failure threshold reached ({failures}/{policy.failure_threshold_consecutive}). Outage detected.",
-                extra={"consecutive_failures": failures, "threshold": policy.failure_threshold_consecutive}
+                f"[OUTAGE_CONFIRMED] Consecutive failure threshold reached ({failures}/{policy.failure_threshold_consecutive}). Outage detected on {region_label}.",
+                extra={"consecutive_failures": failures, "threshold": policy.failure_threshold_consecutive, "primary_region": primary_id}
             )
             for v in voters:
                 v.vote = "PRIMARY_OUTAGE"

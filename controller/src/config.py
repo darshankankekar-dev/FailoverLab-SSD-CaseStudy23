@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     gateway_url: str = "http://localhost:8080"
     region_a_url: str = "http://localhost:8001"
     region_b_url: str = "http://localhost:8002"
+    region_c_url: str = "http://localhost:8004"
+    region_d_url: str = "http://localhost:8005"
+    region_e_url: str = "http://localhost:8006"
+    replication_worker_url: str = "http://localhost:8003"
 
     # Execution flags
     simulation_mode: bool = True  # If downstream services offline, synthesize verified responses

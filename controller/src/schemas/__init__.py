@@ -22,6 +22,7 @@ from .transition import (
 )
 from .state import (
     QuorumVoterModel,
+    DestinationReplicationModel,
     ReplicationStateModel,
     RouteStateModel,
     TelemetryMetricsModel,
@@ -39,6 +40,18 @@ from .internal import (
     RegionalHealthReport,
     QuorumVoteSubmission,
     ChaosInjectionRequest,
+)
+
+from .traffic import (
+    TrafficBatchSubmission,
+    TrafficBatchResponse,
+    TrafficSummaryResponse,
+    TrafficTimeseriesPoint,
+    TrafficTimeseriesResponse,
+    RegionalTrafficItem,
+    RegionalTrafficResponse,
+    TrafficEventModel,
+    TrafficEventsResponse,
 )
 
 __all__ = [
@@ -81,5 +94,14 @@ __all__ = [
     "RegionalHealthReport",
     "QuorumVoteSubmission",
     "ChaosInjectionRequest",
+    "TrafficBatchSubmission",
+    "TrafficBatchResponse",
+    "TrafficSummaryResponse",
+    "TrafficTimeseriesPoint",
+    "TrafficTimeseriesResponse",
+    "RegionalTrafficItem",
+    "RegionalTrafficResponse",
+    "TrafficEventModel",
+    "TrafficEventsResponse",
 ]
 

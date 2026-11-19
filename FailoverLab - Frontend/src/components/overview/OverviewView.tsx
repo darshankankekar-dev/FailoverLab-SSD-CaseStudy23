@@ -5,6 +5,7 @@ import {
   Cpu,
   Info,
   Play,
+  Activity,
 } from 'lucide-react';
 import { SCENARIOS } from '../../data/scenarios';
 import { useSimulation } from '../../simulation/useSimulation';
@@ -12,11 +13,13 @@ import { useSimulation } from '../../simulation/useSimulation';
 interface OverviewViewProps {
   onStartExperiment: () => void;
   onSelectScenario: (scenarioId: string) => void;
+  onNavigateToTrafficLab?: () => void;
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({
   onStartExperiment,
   onSelectScenario,
+  onNavigateToTrafficLab,
 }) => {
   const { regionA, regionB, leaseFence, controllerState } = useSimulation();
 
@@ -96,9 +99,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             standby region while strictly avoiding split-brain scenarios.
           </p>
           <p className="hero-statement-secondary">
-            FailoverLab simulates an Active-Passive topology between Region A (Mumbai) and
-            Region B (Singapore), demonstrating health probing, Raft-style quorum consensus,
-            epoch-fenced database promotion, and dynamic DNS traffic routing.
+            FailoverLab operates a five-region Active-Passive topology spanning Mumbai (region-a),
+            Singapore (region-b), Frankfurt (region-c), Virginia (region-d), and São Paulo (region-e),
+            demonstrating synthetic probing, 3-voter quorum consensus, dynamic candidate selection,
+            epoch fencing, and latency-aware routing.
           </p>
 
           <div className="hero-actions">
@@ -111,10 +115,20 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               <ArrowRight size={16} />
             </button>
 
+            {onNavigateToTrafficLab && (
+              <button
+                className="btn-console btn-secondary hero-cta-btn"
+                onClick={onNavigateToTrafficLab}
+              >
+                <Activity size={16} className="text-healthy" />
+                <span>Traffic Lab & 5-Region Cockpit</span>
+              </button>
+            )}
+
             <div className="hero-stats font-mono">
               <div className="hero-stat-item">
                 <span className="stat-label">Topology:</span>
-                <span className="stat-val text-flow">Active-Passive (2 Regions)</span>
+                <span className="stat-val text-flow">Active-Passive (5 Regions)</span>
               </div>
               <div className="hero-stat-item">
                 <span className="stat-label">Quorum Cluster:</span>

@@ -1,0 +1,489 @@
+/* =========================================================================
+   FailoverLab Traffic Lab & 5-Region Operations Cockpit
+   Restrained, Editorial NOC Console Styling
+   ========================================================================= */
+
+.traffic-lab-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  max-width: 1600px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.traffic-lab-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+}
+
+.traffic-lab-title h1 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin: 0 0 0.25rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  letter-spacing: -0.01em;
+}
+
+.traffic-lab-title p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.traffic-lab-header-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Section Cards & Panels */
+.traffic-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+}
+
+.traffic-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.traffic-panel-header h2,
+.traffic-panel-header h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-bright);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+/* 5 Regions Grid */
+.five-regions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.85rem;
+}
+
+.region-cockpit-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem;
+  transition: border-color 0.12s ease;
+  position: relative;
+}
+
+.region-cockpit-card:hover {
+  border-color: var(--border-highlight);
+}
+
+.region-cockpit-card.card-active {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.05) 0%, var(--bg-panel) 100%);
+}
+
+.region-cockpit-card.card-down {
+  border-color: rgba(239, 68, 68, 0.5);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.05) 0%, var(--bg-panel) 100%);
+}
+
+.region-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.65rem;
+}
+
+.region-identity {
+  display: flex;
+  flex-direction: column;
+}
+
+.region-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.region-name {
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--text-bright);
+}
+
+.region-code-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-xs);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  color: var(--accent-blue);
+}
+
+.region-zone {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.region-card-roles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+}
+
+.region-metrics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 0.65rem;
+}
+
+.region-metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.region-metric-label {
+  color: var(--text-muted);
+}
+
+.region-metric-val {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tag-measured {
+  background: var(--status-healthy-bg);
+  color: var(--status-healthy);
+  border: 1px solid var(--status-healthy-border);
+}
+
+.tag-simulated {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+
+/* Regional Comparison Table */
+.traffic-table-container {
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.traffic-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  text-align: left;
+}
+
+.traffic-table th {
+  background: var(--bg-panel);
+  padding: 0.65rem 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+}
+
+.traffic-table td {
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.traffic-table tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* 2-Column Split Grids */
+.traffic-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+
+@media (max-width: 1024px) {
+  .traffic-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Live Traffic Monitor Table & Filters */
+.monitor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.monitor-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.monitor-filter-select,
+.monitor-search-input {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+  padding: 0.35rem 0.55rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.monitor-table-wrap {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+}
+
+.pulse-live-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-healthy);
+  margin-right: 4px;
+}
+
+/* Rate Limiter Controls */
+.rate-limiter-modes {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--bg-panel);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+.mode-btn:hover {
+  background: var(--bg-panel-elevated);
+  border-color: var(--border-highlight);
+  color: var(--text-bright);
+}
+
+.mode-btn.active {
+  background: var(--accent-blue-bg);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.rate-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+
+.rate-metric-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  padding: 0.55rem 0.75rem;
+  text-align: center;
+}
+
+.rate-metric-card .val {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-bright);
+}
+
+.rate-metric-card .lbl {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 0.15rem;
+  font-family: var(--font-sans);
+}
+
+/* Load Generator Panel */
+.load-gen-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.load-gen-options-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.65rem;
+}
+
+.load-btn-group {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.load-size-btn {
+  flex: 1;
+  padding: 0.35rem;
+  border-radius: var(--radius-xs);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+.load-size-btn:hover {
+  background: var(--bg-panel-elevated);
+  border-color: var(--border-highlight);
+  color: var(--text-bright);
+}
+
+.load-size-btn.active {
+  background: var(--status-healthy-bg);
+  border-color: var(--status-healthy-border);
+  color: var(--status-healthy);
+}
+
+.progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 0.4rem 0;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent-blue);
+  transition: width 0.15s ease;
+}
+
+.region-dist-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.65rem;
+}
+
+.dist-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+}
+
+.dist-bar-track {
+  flex: 1;
+  height: 5px;
+  background: var(--bg-panel);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.dist-bar-fill {
+  height: 100%;
+  background: var(--accent-blue);
+}
+
+/* Failover Workflow Stepper */
+.failover-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.failover-step-item {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-xs);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+}
+
+.failover-step-item.step-passed {
+  border-color: var(--status-healthy-border);
+  background: var(--status-healthy-bg);
+}
+
+.failover-step-item.step-failed {
+  border-color: var(--status-danger-border);
+  background: var(--status-danger-bg);
+}
+
+.failover-step-num {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  background: var(--bg-subtle);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.failover-step-item.step-passed .failover-step-num {
+  background: var(--status-healthy);
+  color: #022c22;
+}
+
+.failover-step-item.step-failed .failover-step-num {
+  background: var(--status-danger);
+  color: #450a0a;
+}

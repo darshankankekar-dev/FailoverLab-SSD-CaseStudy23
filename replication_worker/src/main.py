@@ -53,6 +53,7 @@ app = FastAPI(
 
 class DelayRequest(BaseModel):
     delay_seconds: float = Field(..., ge=0.0, le=60.0, description="Artificial injected latency in seconds")
+    destination: Optional[str] = Field(None, description="Optional target destination to selectively inject latency into")
 
 
 @app.get("/health")
@@ -63,48 +64,66 @@ async def health():
         "is_paused": engine.is_paused,
         "source_region": engine.source_region,
         "target_region": engine.target_region,
+        "destinations": engine.target_regions,
     }
 
 
 @app.get("/status")
 @app.get("/metrics")
 async def status_and_metrics():
-    """Returns replication operational telemetry, directional topology, and measured lag."""
+    """Returns replication operational telemetry, directional topology, and measured lag across all standbys."""
+    lag_dict = lag_tracker.to_dict()
     return {
         "source_region": engine.source_region,
         "target_region": engine.target_region,
+        "destinations": lag_dict.get("destinations", {}),
         "reversal_count": engine.reversal_count,
         "is_paused": engine.is_paused,
         "injected_delay_sec": engine.injected_delay_sec,
         "last_replicated_sequence_id": engine.last_replicated_seq,
         "total_applied_events": engine.total_applied_events,
         "consecutive_errors": engine.consecutive_errors,
-        "lag_metrics": lag_tracker.to_dict(),
+        "lag_metrics": lag_dict,
     }
 
 
 @app.post("/controls/pause")
-async def pause_replication():
-    """Pauses replication to simulate cross-region WAN partition or fiber cut."""
+async def pause_replication(destination: Optional[str] = Query(None, description="Optional destination to pause selectively")):
+    """Pauses replication globally or for a specific destination."""
+    if destination:
+        ts = engine._get_or_create_target_state(destination)
+        ts.is_paused = True
+        logger.info(f"Replication worker PAUSED for destination '{destination}'.")
+        return {"destination": destination, "is_paused": True, "message": f"Replication to {destination} paused."}
     engine.is_paused = True
-    logger.info("Replication worker PAUSED.")
-    return {"is_paused": True, "message": "Replication successfully paused."}
+    logger.info("Replication worker PAUSED globally.")
+    return {"is_paused": True, "message": "Replication successfully paused globally."}
 
 
 @app.post("/controls/resume")
-async def resume_replication():
-    """Resumes replication after partition resolution."""
+async def resume_replication(destination: Optional[str] = Query(None, description="Optional destination to resume selectively")):
+    """Resumes replication globally or for a specific destination."""
+    if destination:
+        ts = engine._get_or_create_target_state(destination)
+        ts.is_paused = False
+        logger.info(f"Replication worker RESUMED for destination '{destination}'.")
+        return {"destination": destination, "is_paused": False, "message": f"Replication to {destination} resumed."}
     engine.is_paused = False
-    logger.info("Replication worker RESUMED.")
-    return {"is_paused": False, "message": "Replication successfully resumed."}
+    logger.info("Replication worker RESUMED globally.")
+    return {"is_paused": False, "message": "Replication successfully resumed globally."}
 
 
 @app.post("/controls/delay")
 async def set_delay(payload: DelayRequest):
-    """Sets artificial replication throttling delay (e.g. 8.4s for Scenario F)."""
+    """Sets artificial replication throttling delay globally or for a specific destination."""
+    if payload.destination:
+        ts = engine._get_or_create_target_state(payload.destination)
+        ts.injected_delay_sec = payload.delay_seconds
+        logger.info(f"Replication delay for '{payload.destination}' set to {payload.delay_seconds:.1f}s.")
+        return {"destination": payload.destination, "injected_delay_sec": payload.delay_seconds}
     engine.injected_delay_sec = payload.delay_seconds
     lag_tracker.injected_delay_sec = payload.delay_seconds
-    logger.info(f"Replication injected delay set to {payload.delay_seconds:.1f}s.")
+    logger.info(f"Replication injected delay set globally to {payload.delay_seconds:.1f}s.")
     return {"injected_delay_sec": payload.delay_seconds, "message": f"Delay updated to {payload.delay_seconds:.1f}s."}
 
 

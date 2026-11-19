@@ -39,6 +39,7 @@ ENV/
 htmlcov/
 .tox/
 .nox/
+*.log
 
 # Database files
 *.db

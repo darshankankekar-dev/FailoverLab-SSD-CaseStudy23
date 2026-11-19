@@ -7,6 +7,7 @@ from .metrics import router as metrics_router
 from .failover import router as failover_router
 from .failback import router as failback_router
 from .reset import router as reset_router
+from .traffic import router as traffic_router
 
 v1_router = APIRouter(prefix="/api/v1")
 
@@ -18,4 +19,5 @@ v1_router.include_router(metrics_router)
 v1_router.include_router(failover_router)
 v1_router.include_router(failback_router)
 v1_router.include_router(reset_router)
+v1_router.include_router(traffic_router)
 

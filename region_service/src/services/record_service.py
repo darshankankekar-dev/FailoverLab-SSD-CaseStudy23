@@ -1,4 +1,6 @@
 import uuid
+import json
+import hashlib
 import logging
 from typing import Dict, Any, Optional, List
 from fastapi import HTTPException, status
@@ -12,6 +14,12 @@ from ..models import (
 )
 
 logger = logging.getLogger("region.services.records")
+
+
+def compute_payload_hash(payload: Dict[str, Any]) -> str:
+    """Computes deterministic SHA256 hash of JSON payload for end-to-end data integrity verification."""
+    canonical_json = json.dumps(payload, sort_keys=True)
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
 
 
 async def validate_writer_authority(
@@ -119,6 +127,8 @@ async def write_record(
         record_key=key,
         operation=operation,
         payload=value,
+        payload_hash=compute_payload_hash(value),
+        source_region_id=meta.region_id,
         version=record.version,
         fencing_epoch=meta.fencing_epoch,
         created_at=now,
@@ -157,6 +167,8 @@ async def delete_record(
         record_key=key,
         operation="DELETE",
         payload={},
+        payload_hash=compute_payload_hash({}),
+        source_region_id=meta.region_id,
         version=existing.version + 1,
         fencing_epoch=meta.fencing_epoch,
         created_at=now,

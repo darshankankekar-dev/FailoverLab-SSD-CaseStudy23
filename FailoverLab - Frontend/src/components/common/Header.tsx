@@ -4,17 +4,24 @@ import {
   BookOpen,
   Pause,
   Play,
-  Activity,
-  Layers,
-  AlertTriangle,
+  Terminal,
+  ShoppingBag,
+  Sliders,
 } from 'lucide-react';
 import { useSimulation } from '../../simulation/useSimulation';
+import { StatusDot } from './StatusDot';
 
 interface HeaderProps {
   onOpenMethodology: () => void;
+  onNavigateToShop?: () => void;
+  onNavigateToController?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenMethodology }) => {
+export const Header: React.FC<HeaderProps> = ({
+  onOpenMethodology,
+  onNavigateToShop,
+  onNavigateToController,
+}) => {
   const {
     regionA,
     regionB,
@@ -30,151 +37,151 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMethodology }) => {
 
   return (
     <header className="failover-header">
+      {/* Brand & System Context */}
       <div className="header-left">
         <div className="logo-group">
           <div className="logo-icon-box">
-            <Layers className="logo-icon" size={20} />
+            <Terminal size={15} />
           </div>
           <div className="logo-text">
             <div className="brand-title">
-              <span className="brand-accent">Failover</span>Lab
+              FailoverLab
             </div>
             <div className="brand-sub">Multi-Region Controller</div>
           </div>
         </div>
 
         <div className="case-badge">
-          <span className="case-tag">SSD CASE 23</span>
+          <span className="case-tag">CASE 23</span>
           <span className="case-title">Active-Passive Control Plane</span>
         </div>
       </div>
 
+      {/* Center Regional Routing State */}
       <div className="header-center">
         <div className="status-pill-group">
-          <div
-            className={`status-pill ${
-              regionA.role === 'ACTIVE'
-                ? regionA.status === 'healthy'
-                  ? 'status-pill-active'
-                  : 'status-pill-warning'
-                : 'status-pill-standby'
-            }`}
-          >
-            <span
-              className={`pulse-dot ${
+          {/* Mumbai ap-south-1 */}
+          <div className="status-pill">
+            <StatusDot
+              status={
                 regionA.role === 'ACTIVE'
                   ? regionA.status === 'healthy'
-                    ? 'pulse-healthy'
-                    : 'pulse-warning'
-                  : 'pulse-standby'
-              }`}
+                    ? 'healthy'
+                    : 'warning'
+                  : 'standby'
+              }
             />
-            <span className="pill-region">Mumbai (ap-south-1):</span>
-            <span className="pill-role font-mono">
+            <span className="pill-region font-mono text-xs">[IN] Mumbai:</span>
+            <span className="pill-role font-mono text-xs">
               {regionA.role} {regionA.status === 'fenced' ? '[FENCED]' : ''}
             </span>
           </div>
 
-          <div className="status-separator">/</div>
+          <span className="status-separator">/</span>
 
-          <div
-            className={`status-pill ${
-              regionB.role === 'ACTIVE'
-                ? 'status-pill-active'
-                : 'status-pill-standby'
-            }`}
-          >
-            <span
-              className={`pulse-dot ${
-                regionB.role === 'ACTIVE' ? 'pulse-healthy' : 'pulse-standby'
-              }`}
+          {/* Singapore ap-southeast-1 */}
+          <div className="status-pill">
+            <StatusDot
+              status={regionB.role === 'ACTIVE' ? 'healthy' : 'standby'}
             />
-            <span className="pill-region">Singapore (ap-southeast-1):</span>
-            <span className="pill-role font-mono">
+            <span className="pill-region font-mono text-xs">[SG] Singapore:</span>
+            <span className="pill-role font-mono text-xs">
               {regionB.role} [Epoch {leaseFence.generationId}]
             </span>
           </div>
         </div>
       </div>
 
+      {/* Right Actions & Navigation */}
       <div className="header-right">
-        {/* Live Backend Connection Indicator */}
+        {/* Backend live / simulation engine mode */}
         <div
-          className={`status-pill ${
-            isBackendConnected ? 'status-pill-active' : 'status-pill-standby'
-          }`}
-          style={{ padding: '3px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '6px' }}
-          title={isBackendConnected ? 'Connected to live Python FastAPI Control Plane (port 8000)' : 'Running in In-Browser Simulation Engine'}
+          className="status-pill"
+          title={isBackendConnected ? 'Connected to live Python FastAPI Control Plane (Port 8000)' : 'Running in In-Browser Simulation Engine'}
         >
-          <span
-            className={`pulse-dot ${
-              isBackendConnected ? 'pulse-healthy' : 'pulse-standby'
-            }`}
-          />
-          <span className="font-mono text-xs">
+          <StatusDot status={isBackendConnected ? 'healthy' : 'standby'} />
+          <span className="font-mono text-xs" style={{ color: 'var(--text-muted)' }}>
             {isBackendConnected ? 'BACKEND LIVE' : 'BROWSER SIM'}
           </span>
         </div>
 
-        {/* Simulation Mode Badge */}
+        {/* Clock state */}
         <div
-          className={`sim-mode-badge ${
-            isDegradedOrFailing
-              ? 'sim-mode-alert'
-              : isRunning
-              ? 'sim-mode-running'
-              : 'sim-mode-paused'
-          }`}
-          title={isDegradedOrFailing ? 'Controller is resolving an active state transition' : 'Clock state'}
+          className="sim-mode-badge font-mono text-xs"
+          title={isDegradedOrFailing ? 'Controller resolving state transition' : 'Clock state'}
         >
-          {isDegradedOrFailing ? (
-            <AlertTriangle size={13} className="text-warning" />
-          ) : isRunning ? (
-            <Activity size={13} className="text-flow" />
-          ) : (
-            <Pause size={13} className="text-muted" />
-          )}
-          <span className="sim-mode-text font-mono">
+          <span className={isDegradedOrFailing ? 'text-warning' : isRunning ? 'text-flow' : 'text-muted'}>
             {isDegradedOrFailing
               ? 'DISRUPTION'
               : isRunning
-              ? 'SIM RUNNING'
-              : 'SIM PAUSED'}
+              ? 'CLOCK RUNNING'
+              : 'CLOCK PAUSED'}
           </span>
         </div>
 
-        {/* Play/Pause clock toggle */}
+        {/* Play/Pause toggle */}
         <button
+          type="button"
           className="btn-console header-action-btn"
           onClick={() => engine.togglePlay()}
           title={isRunning ? 'Pause simulation clock' : 'Resume simulation clock'}
           aria-label={isRunning ? 'Pause simulation clock' : 'Resume simulation clock'}
         >
-          {isRunning ? <Pause size={14} /> : <Play size={14} />}
-          <span className="header-btn-label">{isRunning ? 'Pause' : 'Play'}</span>
+          {isRunning ? <Pause size={13} /> : <Play size={13} />}
+          <span>{isRunning ? 'Pause' : 'Play'}</span>
         </button>
 
-        {/* Reset button */}
+        {/* Reset simulation */}
         <button
-          className="btn-console header-action-btn btn-reset"
+          type="button"
+          className="btn-console header-action-btn"
           onClick={() => engine.reset()}
           title="Reset entire virtual lab to nominal baseline"
           aria-label="Reset simulation to nominal baseline"
         >
-          <RotateCcw size={14} />
-          <span className="header-btn-label">Reset</span>
+          <RotateCcw size={13} />
+          <span>Reset</span>
         </button>
 
-        {/* Methodology / Help button */}
+        {/* System Design Methodology */}
         <button
-          className="btn-console header-action-btn btn-help"
+          type="button"
+          className="btn-console header-action-btn"
           onClick={onOpenMethodology}
-          title="Open System Design methodology & architectural reference"
-          aria-label="Open System Design methodology reference"
+          title="Open System Design architectural specifications"
+          aria-label="Open System Design specifications"
         >
-          <BookOpen size={14} />
-          <span className="header-btn-label">Methodology</span>
+          <BookOpen size={13} />
+          <span>Methodology</span>
         </button>
+
+        {/* Controller UI Navigation */}
+        {onNavigateToController && (
+          <button
+            type="button"
+            className="btn-console header-action-btn btn-primary"
+            onClick={onNavigateToController}
+            title="Open the dedicated Controller Observability & Traffic Console (/controller)"
+            aria-label="Open Controller Console"
+          >
+            <Sliders size={13} />
+            <span>Controller UI</span>
+          </button>
+        )}
+
+        {/* Online Store Navigation */}
+        {onNavigateToShop && (
+          <button
+            type="button"
+            className="btn-console header-action-btn"
+            onClick={onNavigateToShop}
+            title="Launch the integrated Online Shopping storefront (/shop)"
+            aria-label="Open Online Store demonstration"
+          >
+            <ShoppingBag size={13} />
+            <span>Online Store</span>
+          </button>
+        )}
       </div>
     </header>
   );

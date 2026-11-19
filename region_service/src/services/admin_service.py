@@ -5,6 +5,7 @@ from ..models import (
     RegionalMetadataEntity,
     RecordEntity,
     OutboxEventEntity,
+    AppliedReplicationEventEntity,
     utc_now,
 )
 from ..schemas import RegionalStatusResponse, EpochStatusResponse
@@ -97,9 +98,14 @@ async def get_regional_status(session: AsyncSession) -> RegionalStatusResponse:
     res_max_seq = await session.execute(select(func.max(OutboxEventEntity.sequence_id)))
     max_seq = res_max_seq.scalar() or 0
 
+    # Max applied sequence from replication
+    res_app_seq = await session.execute(select(func.max(AppliedReplicationEventEntity.source_sequence_id)))
+    applied_seq = res_app_seq.scalar() or 0
+
     return RegionalStatusResponse(
         region_id=meta.region_id,
         region_name=meta.region_name,
+        name=meta.region_name,
         cloud_zone=meta.cloud_zone,
         role=meta.role,
         health=meta.health,
@@ -109,5 +115,7 @@ async def get_regional_status(session: AsyncSession) -> RegionalStatusResponse:
         total_records=total_records,
         outbox_events_count=outbox_count,
         last_outbox_sequence_id=max_seq,
+        applied_sequence=applied_seq,
+        replication_lag_seconds=0.0,
     )
 

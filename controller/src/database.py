@@ -19,6 +19,7 @@ from .models import (
     QuorumVoterEntity,
     AuditEventEntity,
 )
+from .domain.registry import REGION_REGISTRY
 
 logger = logging.getLogger("controller.database")
 
@@ -50,6 +51,21 @@ async def init_db() -> None:
     logger.info("Initializing controller database schema...")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Ensure schema compatibility for pre-existing database volumes
+        try:
+            from sqlalchemy import text
+            if "sqlite" in str(engine.url):
+                cols_res = await conn.execute(text("PRAGMA table_info(regions);"))
+                col_names = {row[1] for row in cols_res.fetchall()}
+                if "applied_sequence" not in col_names:
+                    await conn.execute(text("ALTER TABLE regions ADD COLUMN applied_sequence INTEGER NOT NULL DEFAULT 0;"))
+                if "replication_lag_seconds" not in col_names:
+                    await conn.execute(text("ALTER TABLE regions ADD COLUMN replication_lag_seconds FLOAT NOT NULL DEFAULT 0.8;"))
+            else:
+                await conn.execute(text("ALTER TABLE regions ADD COLUMN IF NOT EXISTS applied_sequence INTEGER NOT NULL DEFAULT 0;"))
+                await conn.execute(text("ALTER TABLE regions ADD COLUMN IF NOT EXISTS replication_lag_seconds FLOAT NOT NULL DEFAULT 0.8;"))
+        except Exception as e:
+            logger.debug(f"Schema compatibility notice: {e}")
 
     async with AsyncSessionLocal() as session:
         async with session.begin():
@@ -70,48 +86,29 @@ async def init_db() -> None:
                 )
                 session.add(policy)
 
-            # 2. Seed Regions
-            res_a = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
-            if not res_a.scalar_one_or_none():
-                region_a = RegionEntity(
-                    id="region-a",
-                    name="Mumbai",
-                    cloud_zone="ap-south-1",
-                    role="ACTIVE",
-                    health="HEALTHY",
-                    status="healthy",
-                    accepts_writes=True,
-                    ingress_traffic_percent=100,
-                    ingress_rps=2450,
-                    app_servers_healthy=12,
-                    app_servers_total=12,
-                    active_connections=2450,
-                    iops=4800,
-                    fencing_epoch=101,
-                    is_fenced=False,
-                )
-                session.add(region_a)
-
-            res_b = await session.execute(select(RegionEntity).where(RegionEntity.id == "region-b"))
-            if not res_b.scalar_one_or_none():
-                region_b = RegionEntity(
-                    id="region-b",
-                    name="Singapore",
-                    cloud_zone="ap-southeast-1",
-                    role="STANDBY",
-                    health="HEALTHY",
-                    status="healthy",
-                    accepts_writes=False,
-                    ingress_traffic_percent=0,
-                    ingress_rps=0,
-                    app_servers_healthy=12,
-                    app_servers_total=12,
-                    active_connections=0,
-                    iops=120,
-                    fencing_epoch=101,
-                    is_fenced=False,
-                )
-                session.add(region_b)
+            # 2. Seed All Registered Regions
+            for reg_id, reg_def in REGION_REGISTRY.items():
+                res_reg = await session.execute(select(RegionEntity).where(RegionEntity.id == reg_id))
+                if not res_reg.scalar_one_or_none():
+                    is_active = (reg_def.initial_role == "ACTIVE")
+                    region_entity = RegionEntity(
+                        id=reg_def.region_id,
+                        name=reg_def.name,
+                        cloud_zone=reg_def.cloud_zone,
+                        role=reg_def.initial_role,
+                        health="HEALTHY",
+                        status="healthy",
+                        accepts_writes=is_active,
+                        ingress_traffic_percent=100 if is_active else 0,
+                        ingress_rps=2450 if is_active else 0,
+                        app_servers_healthy=12,
+                        app_servers_total=12,
+                        active_connections=2450 if is_active else 0,
+                        iops=reg_def.baseline_iops,
+                        fencing_epoch=101,
+                        is_fenced=False,
+                    )
+                    session.add(region_entity)
 
             # 3. Seed Controller State
             res_state = await session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))

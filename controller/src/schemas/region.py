@@ -19,6 +19,9 @@ class RegionBase(BaseModel):
     iops: int = Field(default=0, ge=0)
     fencing_epoch: int = Field(default=101, ge=1)
     is_fenced: bool = Field(default=False)
+    applied_sequence: int = Field(default=0, ge=0)
+    replication_lag_seconds: float = Field(default=0.8, ge=0.0)
+    latency_ms: Optional[int] = Field(default=None)
 
 
 class RegionResponse(RegionBase):

@@ -114,3 +114,55 @@ async def test_failover_successful_10_steps(db_session):
     assert region_a.accepts_writes is False
     assert region_b.accepts_writes is True
 
+
+@pytest.mark.asyncio
+async def test_failover_to_region_c_frankfurt(db_session):
+    """Verifies failover to any registered standby, e.g. region-c (Frankfurt)."""
+    res_state = await db_session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
+    c_state = res_state.scalar_one()
+    c_state.consecutive_failures = 3
+
+    res_voters = await db_session.execute(select(QuorumVoterEntity))
+    for v in res_voters.scalars().all():
+        v.vote = "PRIMARY_OUTAGE"
+
+    res = await execute_failover_workflow(db_session, force=False, target_region="region-c")
+
+    assert res.status == TransitionStatus.COMPLETED
+    assert res.current_state == ControllerState.SECONDARY_ACTIVE
+    assert res.fencing_epoch == 102
+
+    res_a = await db_session.execute(select(RegionEntity).where(RegionEntity.id == "region-a"))
+    region_a = res_a.scalar_one()
+    assert region_a.accepts_writes is False
+    assert region_a.is_fenced is True
+    assert region_a.role == "STANDBY"
+
+    res_c = await db_session.execute(select(RegionEntity).where(RegionEntity.id == "region-c"))
+    region_c = res_c.scalar_one()
+    assert region_c.accepts_writes is True
+    assert region_c.role == "ACTIVE"
+    assert region_c.fencing_epoch == 102
+
+
+@pytest.mark.asyncio
+async def test_failover_to_region_c_blocked_when_unready(db_session):
+    """Verifies failover to region-c is blocked if region-c health is DOWN."""
+    res_state = await db_session.execute(select(ControllerStateEntity).where(ControllerStateEntity.id == 1))
+    c_state = res_state.scalar_one()
+    c_state.consecutive_failures = 3
+
+    res_voters = await db_session.execute(select(QuorumVoterEntity))
+    for v in res_voters.scalars().all():
+        v.vote = "PRIMARY_OUTAGE"
+
+    res_c = await db_session.execute(select(RegionEntity).where(RegionEntity.id == "region-c"))
+    region_c = res_c.scalar_one()
+    region_c.health = "DOWN"
+
+    res = await execute_failover_workflow(db_session, force=False, target_region="region-c")
+    assert res.status == TransitionStatus.BLOCKED
+    assert res.current_state == ControllerState.FAILOVER_BLOCKED
+    assert "Standby not ready" in res.message
+
+
