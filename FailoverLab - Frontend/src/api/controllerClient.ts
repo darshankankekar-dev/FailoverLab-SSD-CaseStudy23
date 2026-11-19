@@ -204,88 +204,101 @@ export interface RecordItemDto {
 }
 
 export interface TrafficSummaryDto {
-  client_ingress_bytes_per_sec: number;
-  client_egress_bytes_per_sec: number;
-  client_ingress_bytes_total: number;
-  client_egress_bytes_total: number;
-  upstream_egress_bytes_per_sec: number;
+  current_ingress_bytes_per_sec: number;
+  current_egress_bytes_per_sec: number;
+  cumulative_ingress_bytes: number;
+  cumulative_egress_bytes: number;
   upstream_ingress_bytes_per_sec: number;
-  upstream_egress_bytes_total: number;
-  upstream_ingress_bytes_total: number;
-  requests_per_sec: number;
-  requests_total: number;
-  success_count: number;
-  client_error_count: number;
-  server_error_count: number;
-  rate_limited_count: number;
+  upstream_egress_bytes_per_sec: number;
+  request_rate: number;
+  total_requests: number;
   status_2xx: number;
   status_3xx: number;
   status_4xx: number;
   status_5xx: number;
-  status_429: number;
+  rate_limited_429: number;
+  latency_avg_ms: number;
   latency_p50_ms: number;
   latency_p95_ms: number;
   latency_p99_ms: number;
-  latency_avg_ms: number;
-  last_telemetry_timestamp: string | null;
-  telemetry_freshness: 'FRESH' | 'STALE' | 'UNAVAILABLE';
+  last_received_timestamp: string | null;
+  telemetry_freshness: 'FRESH' | 'STALE' | 'UNAVAILABLE' | 'PENDING';
+  telemetry_age_seconds: number | null;
+  is_available: boolean;
   measurement_source: string;
-  active_gateway_instances: string[];
-  dropped_batches_total: number;
+  measurement_unit: string;
+  measurement_type: string;
+  note: string;
 }
 
 export interface TrafficTimeseriesPointDto {
   timestamp: string;
-  client_ingress_bytes_per_sec: number;
-  client_egress_bytes_per_sec: number;
-  upstream_egress_bytes_per_sec: number;
-  upstream_ingress_bytes_per_sec: number;
-  requests_per_sec: number;
-  error_rate_percent: number;
+  client_ingress_bytes: number;
+  client_egress_bytes: number;
+  client_ingress_rate: number;
+  client_egress_rate: number;
+  upstream_ingress_rate: number;
+  upstream_egress_rate: number;
+  request_rate: number;
+  error_rate: number;
+  status_2xx: number;
+  status_4xx: number;
+  status_5xx: number;
   latency_p95_ms: number;
 }
 
 export interface TrafficTimeseriesResponseDto {
-  range_seconds: number;
+  time_range_seconds: number;
   step_seconds: number;
-  points_count: number;
+  point_count: number;
   points: TrafficTimeseriesPointDto[];
 }
 
 export interface RegionalTrafficItemDto {
   region_id: string;
-  city: string;
-  role: 'ACTIVE' | 'STANDBY';
-  health: string;
-  requests_per_sec: number;
+  region_name: string;
+  cloud_zone: string;
   requests_total: number;
-  ingress_bytes_per_sec: number;
-  egress_bytes_per_sec: number;
-  ingress_bytes_total: number;
-  egress_bytes_total: number;
-  replication_lag_seconds: number;
-  last_telemetry_timestamp: string | null;
+  request_rate: number;
+  upstream_request_bytes: number;
+  upstream_response_bytes: number;
+  upstream_ingress_rate: number;
+  upstream_egress_rate: number;
+  status_2xx: number;
+  status_3xx: number;
+  status_4xx: number;
+  status_5xx: number;
+  failed_requests: number;
+  timeouts: number;
+  latency_avg_ms: number;
 }
 
 export interface RegionalTrafficResponseDto {
-  active_region: string;
-  regions: RegionalTrafficItemDto[];
+  timestamp: string;
+  regions: Record<string, RegionalTrafficItemDto>;
 }
 
 export interface TrafficEventItemDto {
   id: string;
-  timestamp: string;
   request_id: string;
+  timestamp: string;
   method: string;
   endpoint: string;
   client_region: string;
   served_region: string;
-  status_code: number;
-  payload_ingress_bytes: number;
-  payload_egress_bytes: number;
-  duration_ms: number;
   request_type: string;
+  rate_limiter_decision: string;
+  status_code: number;
+  duration_ms: number;
+  request_payload_bytes: number;
+  response_payload_bytes: number;
+  request_category: string;
+  upstream_region?: string | null;
+  upstream_request_bytes: number;
+  upstream_response_bytes: number;
+  upstream_duration_ms: number;
   traffic_source: string;
+  is_replay: boolean;
 }
 
 export interface TrafficEventsResponseDto {
@@ -728,7 +741,15 @@ export class ControllerClient {
   public async fetchTrafficEvents(
     page = 1,
     pageSize = 20,
-    filters?: { region?: string; statusCode?: number; requestType?: string; method?: string }
+    filters?: {
+      trafficSource?: string;
+      clientRegion?: string;
+      servedRegion?: string;
+      statusCode?: number;
+      requestType?: string;
+      region?: string;
+      method?: string;
+    }
   ): Promise<TrafficEventsResponseDto | null> {
     try {
       const base = this.controllerUrl;
@@ -736,12 +757,26 @@ export class ControllerClient {
         page: String(page),
         page_size: String(pageSize),
       });
-      if (filters?.region && filters.region !== 'ALL') params.append('region', filters.region);
-      if (filters?.statusCode) params.append('status_code', String(filters.statusCode));
-      if (filters?.requestType && filters.requestType !== 'ALL') params.append('request_type', filters.requestType);
-      if (filters?.method && filters.method !== 'ALL') params.append('method', filters.method);
+      if (filters?.trafficSource && filters.trafficSource !== 'ALL') {
+        params.append('traffic_source', filters.trafficSource);
+      }
+      if (filters?.clientRegion && filters.clientRegion !== 'ALL') {
+        params.append('client_region', filters.clientRegion);
+      }
+      if (filters?.servedRegion && filters.servedRegion !== 'ALL') {
+        params.append('served_region', filters.servedRegion);
+      }
+      if (filters?.region && filters.region !== 'ALL') {
+        params.append('served_region', filters.region);
+      }
+      if (filters?.statusCode) {
+        params.append('status_code', String(filters.statusCode));
+      }
+      if (filters?.requestType && filters.requestType !== 'ALL') {
+        params.append('request_type', filters.requestType);
+      }
 
-      const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/events?${params.toString()}`, {}, 3000);
+      const res = await this.fetchWithTimeout(`${base}/api/v1/traffic/recent-events?${params.toString()}`, {}, 3000);
       if (!res.ok) return null;
       return await res.json();
     } catch {

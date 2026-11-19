@@ -12,12 +12,12 @@ import type {
   RegionalTrafficItemDto,
   TrafficSummaryDto,
 } from '../../api/controllerClient';
-import { formatBytesPerSec, formatRelativeTime } from './formatters';
+import { formatBytesPerSec, formatLatency } from './formatters';
 
 interface ControllerRegionalOperationsTabProps {
   controllerState: ControllerStateDto | null;
   regionalTraffic: RegionalTrafficItemDto[];
-  trafficSummary: TrafficSummaryDto | null;
+  trafficSummary?: TrafficSummaryDto | null;
   onRefresh: () => void;
 }
 
@@ -32,13 +32,13 @@ const REGION_METADATA: Record<string, { city: string; code: string; zone: string
 export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperationsTabProps> = ({
   controllerState,
   regionalTraffic,
-  trafficSummary,
+  trafficSummary: _trafficSummary,
   onRefresh,
 }) => {
   const [actionMessage, setActionMessage] = useState<{ text: string; isError?: boolean } | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
 
-  const activeRegion = controllerState?.active_region || 'region-a';
+  const activeRegion = controllerState?.active_region || '—';
   const regionsList = controllerState?.regions || [
     controllerState?.region_a,
     controllerState?.region_b,
@@ -47,14 +47,11 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
     controllerState?.region_e,
   ].filter(Boolean);
 
-  // Compute total ingress throughput across all regions for proportional bar
-  let totalIngressBps = 0;
+  // Compute total upstream egress throughput (Gateway -> Region) across all regions for proportional bar
+  let totalUpstreamEgressBps = 0;
   regionalTraffic.forEach((r) => {
-    totalIngressBps += r.ingress_bytes_per_sec || 0;
+    totalUpstreamEgressBps += r.upstream_egress_rate || 0;
   });
-  if (totalIngressBps === 0 && trafficSummary && trafficSummary.client_ingress_bytes_per_sec > 0) {
-    totalIngressBps = trafficSummary.client_ingress_bytes_per_sec;
-  }
 
   const handlePromote = async (targetRegionId: string) => {
     if (targetRegionId === activeRegion) return;
@@ -152,15 +149,15 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
         <div className="ctrl-panel-header">
           <div className="ctrl-panel-title">
             <Globe2 size={16} />
-            <span>Regional Traffic Distribution & Proportional Ingress Share</span>
+            <span>Regional Traffic Distribution & Gateway-to-Region Forward Share</span>
           </div>
           <span className="font-mono text-xs text-muted">
-            Total Aggregate: {formatBytesPerSec(totalIngressBps)}
+            Total Aggregate Forward: {formatBytesPerSec(totalUpstreamEgressBps)}
           </span>
         </div>
 
         <div className="ctrl-panel-body">
-          {totalIngressBps > 0 ? (
+          {totalUpstreamEgressBps > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {/* Stacked Percentage Bar */}
               <div
@@ -176,9 +173,8 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
               >
                 {['region-a', 'region-b', 'region-c', 'region-d', 'region-e'].map((rId, i) => {
                   const tItem = regionalTraffic.find((t) => t.region_id === rId);
-                  const isWriter = rId === activeRegion;
-                  const bps = (tItem && tItem.ingress_bytes_per_sec) || (isWriter && trafficSummary ? trafficSummary.client_ingress_bytes_per_sec : 0);
-                  const pct = totalIngressBps > 0 ? (bps / totalIngressBps) * 100 : 0;
+                  const bps = tItem?.upstream_egress_rate || 0;
+                  const pct = totalUpstreamEgressBps > 0 ? (bps / totalUpstreamEgressBps) * 100 : 0;
                   if (pct <= 0) return null;
 
                   const colors = ['#0ea5e9', '#10b981', '#f59e0b', '#a855f7', '#ec4899'];
@@ -202,9 +198,8 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
                 {['region-a', 'region-b', 'region-c', 'region-d', 'region-e'].map((rId, i) => {
                   const meta = REGION_METADATA[rId];
                   const tItem = regionalTraffic.find((t) => t.region_id === rId);
-                  const isWriter = rId === activeRegion;
-                  const bps = (tItem && tItem.ingress_bytes_per_sec) || (isWriter && trafficSummary ? trafficSummary.client_ingress_bytes_per_sec : 0);
-                  const pct = totalIngressBps > 0 ? (bps / totalIngressBps) * 100 : 0;
+                  const bps = tItem?.upstream_egress_rate || 0;
+                  const pct = totalUpstreamEgressBps > 0 ? (bps / totalUpstreamEgressBps) * 100 : 0;
                   const colors = ['#0ea5e9', '#10b981', '#f59e0b', '#a855f7', '#ec4899'];
 
                   return (
@@ -228,7 +223,7 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
             </div>
           ) : (
             <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontFamily: 'var(--font-mono)' }}>
-              No ingress traffic currently flowing to regional backends. Generate orders or catalog queries from the Online Store to visualize regional distribution.
+              No upstream regional forward traffic currently measured. Generate requests through the Gateway to observe regional distribution.
             </div>
           )}
         </div>
@@ -242,7 +237,9 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
             <span>Regional Fleet Operations (5 Regions)</span>
           </div>
           <span className="font-mono text-xs text-muted">
-            Active Fencing Epoch: #{controllerState?.fencing_epoch ?? 101}
+            {typeof controllerState?.fencing_epoch === 'number'
+              ? `Active Fencing Epoch: #${controllerState.fencing_epoch}`
+              : 'Fencing Epoch: —'}
           </span>
         </div>
 
@@ -255,11 +252,11 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
                   <th>Location</th>
                   <th>Role</th>
                   <th>Health Status</th>
-                  <th>Requests / Sec</th>
-                  <th>Ingress Throughput</th>
-                  <th>Egress Throughput</th>
+                  <th>Request Rate</th>
+                  <th>Gateway → Region</th>
+                  <th>Region → Gateway</th>
                   <th>Replication Lag</th>
-                  <th>Last Telemetry</th>
+                  <th>Avg Latency</th>
                   <th>Administrative Actions</th>
                 </tr>
               </thead>
@@ -269,15 +266,16 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
                   const regData = regionsList.find((r) => r && r.id === rId);
                   const tItem = regionalTraffic.find((t) => t.region_id === rId);
                   const isWriter = rId === activeRegion;
-                  const health = regData?.health || 'HEALTHY';
-                  const isHealthy = health === 'HEALTHY';
+                  const isHealthy = regData?.health === 'HEALTHY';
+                  const isBackendConnected = Boolean(controllerState);
+                  const healthStatus = regData?.health || (isBackendConnected ? 'Not reported' : 'Unavailable');
 
-                  // Compute truthful rates without fabricating data
-                  const rps = (tItem && tItem.requests_per_sec) || (isWriter && trafficSummary ? trafficSummary.requests_per_sec : 0);
-                  const ingressBps = (tItem && tItem.ingress_bytes_per_sec) || (isWriter && trafficSummary ? trafficSummary.client_ingress_bytes_per_sec : 0);
-                  const egressBps = (tItem && tItem.egress_bytes_per_sec) || (isWriter && trafficSummary ? trafficSummary.client_egress_bytes_per_sec : 0);
-                  const lag = regData?.replication_lag_seconds ?? (isWriter ? 0 : controllerState?.replication?.lag_seconds ?? 0);
-                  const lastSeen = tItem?.last_telemetry_timestamp || (isWriter ? trafficSummary?.last_telemetry_timestamp : null);
+                  // Upstream payload rates and request rates
+                  const rps = tItem ? tItem.request_rate : 0;
+                  const egressBps = tItem ? tItem.upstream_egress_rate : 0;
+                  const ingressBps = tItem ? tItem.upstream_ingress_rate : 0;
+                  const lag = regData?.replication_lag_seconds ?? (isWriter ? 0 : controllerState?.replication?.lag_seconds);
+                  const latencyAvg = tItem?.latency_avg_ms;
 
                   return (
                     <tr key={rId} className={isWriter ? 'active-row' : ''}>
@@ -314,28 +312,28 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
                             isHealthy ? 'badge-healthy' : 'badge-danger'
                           }`}
                         >
-                          {health}
+                          {healthStatus}
                         </span>
                       </td>
 
-                      {/* Requests / Sec */}
+                      {/* Request Rate */}
                       <td className="font-mono">
                         {rps > 0 ? `${rps.toFixed(1)} req/s` : <span className="text-muted">0.0 req/s</span>}
                       </td>
 
-                      {/* Ingress Throughput */}
+                      {/* Gateway -> Region Egress */}
                       <td className="font-mono">
-                        {ingressBps > 0 ? (
-                          <span className="text-flow font-bold">{formatBytesPerSec(ingressBps)}</span>
+                        {egressBps > 0 ? (
+                          <span className="text-flow font-bold">{formatBytesPerSec(egressBps)}</span>
                         ) : (
                           <span className="text-muted">0.0 B/s (Idle)</span>
                         )}
                       </td>
 
-                      {/* Egress Throughput */}
+                      {/* Region -> Gateway Ingress */}
                       <td className="font-mono">
-                        {egressBps > 0 ? (
-                          <span className="text-healthy font-bold">{formatBytesPerSec(egressBps)}</span>
+                        {ingressBps > 0 ? (
+                          <span className="text-healthy font-bold">{formatBytesPerSec(ingressBps)}</span>
                         ) : (
                           <span className="text-muted">0.0 B/s (Idle)</span>
                         )}
@@ -345,16 +343,18 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
                       <td className="font-mono">
                         {isWriter ? (
                           <span className="text-muted font-mono">0.00s (Source)</span>
-                        ) : (
+                        ) : lag !== undefined ? (
                           <span className={lag > 3 ? 'text-danger font-bold' : lag > 1 ? 'text-warning' : 'text-primary'}>
                             {lag.toFixed(2)}s
                           </span>
+                        ) : (
+                          <span className="text-muted">—</span>
                         )}
                       </td>
 
-                      {/* Last Telemetry */}
-                      <td className="font-mono text-xs text-muted">
-                        {formatRelativeTime(lastSeen || null)}
+                      {/* Avg Latency */}
+                      <td className="font-mono text-xs">
+                        {latencyAvg !== undefined && latencyAvg > 0 ? formatLatency(latencyAvg) : <span className="text-muted">—</span>}
                       </td>
 
                       {/* Administrative Actions */}
@@ -377,7 +377,7 @@ export const ControllerRegionalOperationsTab: React.FC<ControllerRegionalOperati
                             type="button"
                             className={`btn-console btn-sm ${isHealthy ? 'btn-danger' : 'btn-primary'}`}
                             disabled={isExecuting}
-                            onClick={() => handleToggleHealth(rId, health)}
+                            onClick={() => handleToggleHealth(rId, regData?.health || (isHealthy ? 'HEALTHY' : 'DOWN'))}
                             title={isHealthy ? `Inject failure into ${meta.city}` : `Recover ${meta.city}`}
                           >
                             <Zap size={12} />

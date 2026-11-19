@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     telemetry_export_enabled: bool = True
     telemetry_export_interval_seconds: float = 1.0
     telemetry_queue_capacity: int = 100
+    telemetry_max_retries: int = 5
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

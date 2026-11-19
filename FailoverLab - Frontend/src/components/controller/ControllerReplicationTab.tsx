@@ -31,7 +31,8 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
 
   const replication = controllerState?.replication;
   const destinations = replication?.destinations || {};
-  const activeRegion = controllerState?.active_region || 'region-a';
+  const activeRegion = controllerState?.active_region || '—';
+  const hasReplication = !!replication;
 
   const handlePause = async (destId?: string) => {
     setIsProcessing(true);
@@ -91,7 +92,7 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
             <GitBranch size={16} className="text-flow" />
           </div>
           <div className="ctrl-vital-value text-flow font-mono">
-            {replication?.status || 'STREAMING'}
+            {replication?.status || (hasReplication ? 'STREAMING' : 'Unavailable')}
           </div>
           <div className="ctrl-vital-sub">
             <span className="text-muted">Outbox Protocol:</span>
@@ -103,11 +104,15 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
           <div className="ctrl-vital-top">
             <span className="ctrl-vital-label">Aggregate Time Lag</span>
             <span className="badge-tag-sm badge-warning font-mono">
-              {(replication?.lag_seconds ?? 0).toFixed(2)}s
+              {replication?.lag_seconds !== undefined ? `${replication.lag_seconds.toFixed(2)}s` : '—'}
             </span>
           </div>
           <div className="ctrl-vital-value font-mono">
-            {(replication?.lag_ms ?? (replication?.lag_seconds ?? 0) * 1000).toFixed(0)} ms
+            {replication?.lag_ms !== undefined
+              ? `${replication.lag_ms} ms`
+              : replication?.lag_seconds !== undefined
+                ? `${(replication.lag_seconds * 1000).toFixed(0)} ms`
+                : '—'}
           </div>
           <div className="ctrl-vital-sub">
             <span className="text-muted">Acceptable SLA limit:</span>
@@ -121,11 +126,11 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
             <Server size={16} className="text-healthy" />
           </div>
           <div className="ctrl-vital-value font-mono text-healthy">
-            {replication?.bandwidth_mbps || 100} Mbps
+            {replication?.bandwidth_mbps !== undefined ? `${replication.bandwidth_mbps} Mbps` : '—'}
           </div>
           <div className="ctrl-vital-sub">
             <span className="text-muted">Packet Loss:</span>
-            <span className="font-mono">{replication?.packet_loss_percent || 0.0}%</span>
+            <span className="font-mono">{replication?.packet_loss_percent !== undefined ? `${replication.packet_loss_percent.toFixed(1)}%` : '—'}</span>
           </div>
         </div>
 
@@ -135,7 +140,11 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
             <ShieldCheck size={16} className="text-flow" />
           </div>
           <div className="ctrl-vital-value font-mono">
-            #{(controllerState as any)?.applied_sequence ?? 450}
+            {controllerState?.region_a?.applied_sequence !== undefined
+              ? `#${controllerState.region_a.applied_sequence}`
+              : (Object.values(destinations)[0]?.source_highest_sequence !== undefined
+                ? `#${Object.values(destinations)[0].source_highest_sequence}`
+                : '—')}
           </div>
           <div className="ctrl-vital-sub">
             <span className="text-muted">Source:</span>
@@ -195,10 +204,10 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
                 {['region-a', 'region-b', 'region-c', 'region-d', 'region-e'].map((rId) => {
                   const isSource = rId === activeRegion;
                   const destInfo = destinations[rId];
-                  const lagSec = destInfo?.lag_seconds ?? (isSource ? 0 : replication?.lag_seconds ?? 0);
-                  const status = isSource ? 'SOURCE' : destInfo?.status || replication?.status || 'STREAMING';
-                  const appliedSeq = destInfo?.applied_sequence ?? 450;
-                  const seqLag = isSource ? 0 : (destInfo?.sequence_lag ?? Math.max(0, Math.floor(lagSec * 10)));
+                  const lagSec = destInfo?.lag_seconds ?? (isSource ? 0 : replication?.lag_seconds);
+                  const status = isSource ? 'SOURCE' : destInfo?.status || replication?.status || (isSource ? 'SOURCE' : 'Unavailable');
+                  const appliedSeq = destInfo?.applied_sequence;
+                  const seqLag = isSource ? 0 : destInfo?.sequence_lag;
 
                   return (
                     <tr key={rId} className={isSource ? 'active-row' : ''}>
@@ -227,17 +236,21 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
 
                       {/* Applied Sequence */}
                       <td className="font-mono">
-                        #{appliedSeq}
+                        {appliedSeq !== undefined ? `#${appliedSeq}` : <span className="text-muted">—</span>}
                       </td>
 
                       {/* Sequence Lag */}
                       <td className="font-mono">
                         {isSource ? (
                           <span className="text-muted">0 (Source)</span>
-                        ) : seqLag > 0 ? (
-                          <span className="text-warning font-bold">{seqLag} tx behind</span>
+                        ) : seqLag !== undefined ? (
+                          seqLag > 0 ? (
+                            <span className="text-warning font-bold">{seqLag} tx behind</span>
+                          ) : (
+                            <span className="text-healthy">0 tx (In-Sync)</span>
+                          )
                         ) : (
-                          <span className="text-healthy">0 tx (In-Sync)</span>
+                          <span className="text-muted">—</span>
                         )}
                       </td>
 
@@ -245,21 +258,23 @@ export const ControllerReplicationTab: React.FC<ControllerReplicationTabProps> =
                       <td className="font-mono">
                         {isSource ? (
                           <span className="text-muted">0.00s</span>
-                        ) : (
+                        ) : lagSec !== undefined ? (
                           <span className={lagSec > 3 ? 'text-danger font-bold' : lagSec > 1 ? 'text-warning' : 'text-primary'}>
                             {lagSec.toFixed(2)}s
                           </span>
+                        ) : (
+                          <span className="text-muted">—</span>
                         )}
                       </td>
 
                       {/* Retries */}
                       <td className="font-mono text-muted">
-                        {destInfo?.retry_count ?? 0}
+                        {destInfo?.retry_count ?? '—'}
                       </td>
 
                       {/* Failures */}
                       <td className="font-mono text-muted">
-                        {destInfo?.consecutive_failures ?? 0}
+                        {destInfo?.consecutive_failures ?? '—'}
                       </td>
 
                       {/* Controls */}

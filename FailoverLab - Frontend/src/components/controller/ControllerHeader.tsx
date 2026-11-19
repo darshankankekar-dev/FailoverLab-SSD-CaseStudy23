@@ -33,11 +33,11 @@ export const ControllerHeader: React.FC<ControllerHeaderProps> = ({
   onNavigateToShop,
   onNavigateToConsole,
 }) => {
-  const activeRegion = controllerState?.active_region || 'region-a';
-  const epoch = controllerState?.fencing_epoch ?? 101;
-  const cState = controllerState?.controller_state || 'HEALTHY';
-  const freshness = trafficSummary?.telemetry_freshness || (isBackendConnected ? 'FRESH' : 'UNAVAILABLE');
-  const lastUpdate = trafficSummary?.last_telemetry_timestamp;
+  const activeRegion = controllerState?.active_region || '—';
+  const epoch = controllerState?.fencing_epoch !== undefined ? controllerState.fencing_epoch : '—';
+  const cState = controllerState?.controller_state || (isBackendConnected ? 'Loading' : 'DISCONNECTED');
+  const freshness = trafficSummary?.telemetry_freshness || (isBackendConnected ? 'UNAVAILABLE' : 'DISCONNECTED');
+  const lastUpdate = trafficSummary?.last_received_timestamp;
 
   return (
     <header className="controller-header">
@@ -73,7 +73,9 @@ export const ControllerHeader: React.FC<ControllerHeaderProps> = ({
           <ShieldCheck size={13} className="text-flow" />
           <span className="label">Active Writer:</span>
           <span className="val text-flow">{activeRegion}</span>
-          <span className="badge-tag-sm badge-warning font-mono">Epoch #{epoch}</span>
+          <span className="badge-tag-sm badge-warning font-mono">
+            {typeof epoch === 'number' ? `Epoch #${epoch}` : 'Epoch —'}
+          </span>
         </div>
 
         {/* State Machine Status */}

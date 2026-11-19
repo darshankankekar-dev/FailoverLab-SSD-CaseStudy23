@@ -33,7 +33,8 @@ async def get_traffic_summary() -> TrafficSummaryResponse:
 
 @router.get("/timeseries", response_model=TrafficTimeseriesResponse)
 async def get_traffic_timeseries(
-    time_range_seconds: int = Query(default=300, ge=10, le=86400, description="Time range in seconds (default 300s/5m)"),
+    time_range_seconds: Optional[int] = Query(default=None, ge=10, le=86400, description="Time range in seconds (default 300s/5m)"),
+    range_seconds: Optional[int] = Query(default=None, ge=10, le=86400, description="Alias for time_range_seconds"),
     step_seconds: int = Query(default=1, ge=1, le=300, description="Sampling bucket interval in seconds"),
     session: AsyncSession = Depends(get_db_session),
 ) -> TrafficTimeseriesResponse:
@@ -41,8 +42,9 @@ async def get_traffic_timeseries(
     Returns historical traffic time-series samples for graphs and charts.
     Supports flexible time ranges and step sampling.
     """
+    effective_range = time_range_seconds if time_range_seconds is not None else (range_seconds if range_seconds is not None else 300)
     return await traffic_service.get_traffic_timeseries(
-        session=session, time_range_seconds=time_range_seconds, step_seconds=step_seconds
+        session=session, time_range_seconds=effective_range, step_seconds=step_seconds
     )
 
 
@@ -56,16 +58,31 @@ async def get_regional_traffic() -> RegionalTrafficResponse:
     return traffic_service.get_regional_traffic()
 
 
+@router.get("/recent-events", response_model=TrafficEventsResponse)
 @router.get("/events", response_model=TrafficEventsResponse)
-async def get_traffic_events(
+async def get_recent_traffic_events(
     page: int = Query(default=1, ge=1, description="Page number"),
     page_size: int = Query(default=20, ge=1, le=100, description="Page size (max 100)"),
+    traffic_source: Optional[str] = Query(None, description="Filter by traffic source"),
+    client_region: Optional[str] = Query(None, description="Filter by client region"),
+    served_region: Optional[str] = Query(None, description="Filter by served region"),
+    status_code: Optional[int] = Query(None, description="Filter by HTTP status code"),
+    request_type: Optional[str] = Query(None, description="Filter by request type"),
 ) -> TrafficEventsResponse:
     """
-    Returns recent bounded request traffic events with pagination.
+    Returns recent bounded request traffic events with pagination (newest first).
+    Supports filtering by traffic source, regions, status code, and request type.
     Sanitized to never expose passwords, personal data, or customer secrets.
     """
-    return traffic_service.get_traffic_events(page=page, page_size=page_size)
+    return traffic_service.get_traffic_events(
+        page=page,
+        page_size=page_size,
+        traffic_source=traffic_source,
+        client_region=client_region,
+        served_region=served_region,
+        status_code=status_code,
+        request_type=request_type,
+    )
 
 
 @router.get("/stream")

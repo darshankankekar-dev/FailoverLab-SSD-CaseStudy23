@@ -78,9 +78,9 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
     let maxRps = 5; // default minimum scale 5 req/s
 
     timeseries.forEach((p) => {
-      const ingress = p.client_ingress_bytes_per_sec || 0;
-      const egress = p.client_egress_bytes_per_sec || 0;
-      const rps = p.requests_per_sec || 0;
+      const ingress = p.client_ingress_rate || 0;
+      const egress = p.client_egress_rate || 0;
+      const rps = p.request_rate || 0;
       if (ingress > maxBytes) maxBytes = ingress;
       if (egress > maxBytes) maxBytes = egress;
       if (rps > maxRps) maxRps = rps;
@@ -95,19 +95,19 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
 
     const ingressPoints = timeseries.map((p, idx) => {
       const x = padding.left + idx * stepX;
-      const y = padding.top + plotHeight - ((p.client_ingress_bytes_per_sec || 0) / maxBytes) * plotHeight;
+      const y = padding.top + plotHeight - ((p.client_ingress_rate || 0) / maxBytes) * plotHeight;
       return { x, y, point: p };
     });
 
     const egressPoints = timeseries.map((p, idx) => {
       const x = padding.left + idx * stepX;
-      const y = padding.top + plotHeight - ((p.client_egress_bytes_per_sec || 0) / maxBytes) * plotHeight;
+      const y = padding.top + plotHeight - ((p.client_egress_rate || 0) / maxBytes) * plotHeight;
       return { x, y, point: p };
     });
 
     const rpsPoints = timeseries.map((p, idx) => {
       const x = padding.left + idx * stepX;
-      const y = padding.top + plotHeight - ((p.requests_per_sec || 0) / maxRps) * plotHeight;
+      const y = padding.top + plotHeight - ((p.request_rate || 0) / maxRps) * plotHeight;
       return { x, y, point: p };
     });
 
@@ -134,12 +134,12 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
     };
   }, [timeseries]);
 
-  const totalRequests = summary?.requests_total ?? 0;
+  const totalRequests = summary?.total_requests ?? 0;
   const s2xx = summary?.status_2xx ?? 0;
   const s3xx = summary?.status_3xx ?? 0;
   const s4xx = summary?.status_4xx ?? 0;
   const s5xx = summary?.status_5xx ?? 0;
-  const s429 = summary?.status_429 ?? 0;
+  const s429 = summary?.rate_limited_429 ?? 0;
 
   return (
     <div className="controller-tab-pane">
@@ -156,12 +156,12 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
           </div>
           <div className="ctrl-traffic-metric-title">Client Request Payload</div>
           <div className="ctrl-traffic-rate-val text-flow">
-            {summary ? formatBytesPerSec(summary.client_ingress_bytes_per_sec) : '0.0 B/s'}
+            {summary && summary.is_available ? formatBytesPerSec(summary.current_ingress_bytes_per_sec) : '0.0 B/s'}
           </div>
           <div className="ctrl-traffic-cumulative-box">
             <span className="text-muted">Cumulative Payload</span>
             <span className="font-mono font-bold text-flow">
-              {summary ? formatBytes(summary.client_ingress_bytes_total) : '0 B'}
+              {summary && summary.is_available ? formatBytes(summary.cumulative_ingress_bytes) : '0 B'}
             </span>
           </div>
         </div>
@@ -177,12 +177,12 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
           </div>
           <div className="ctrl-traffic-metric-title">Client Response Payload</div>
           <div className="ctrl-traffic-rate-val text-healthy">
-            {summary ? formatBytesPerSec(summary.client_egress_bytes_per_sec) : '0.0 B/s'}
+            {summary && summary.is_available ? formatBytesPerSec(summary.current_egress_bytes_per_sec) : '0.0 B/s'}
           </div>
           <div className="ctrl-traffic-cumulative-box">
             <span className="text-muted">Cumulative Payload</span>
             <span className="font-mono font-bold text-healthy">
-              {summary ? formatBytes(summary.client_egress_bytes_total) : '0 B'}
+              {summary && summary.is_available ? formatBytes(summary.cumulative_egress_bytes) : '0 B'}
             </span>
           </div>
         </div>
@@ -198,12 +198,12 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
           </div>
           <div className="ctrl-traffic-metric-title">Backend Forward Payload</div>
           <div className="ctrl-traffic-rate-val" style={{ color: '#fbbf24' }}>
-            {summary ? formatBytesPerSec(summary.upstream_egress_bytes_per_sec) : '0.0 B/s'}
+            {summary && summary.is_available ? formatBytesPerSec(summary.upstream_egress_bytes_per_sec) : '0.0 B/s'}
           </div>
           <div className="ctrl-traffic-cumulative-box">
-            <span className="text-muted">Cumulative Payload</span>
+            <span className="text-muted">Routing Path</span>
             <span className="font-mono font-bold" style={{ color: '#fbbf24' }}>
-              {summary ? formatBytes(summary.upstream_egress_bytes_total) : '0 B'}
+              Gateway Proxies
             </span>
           </div>
         </div>
@@ -219,12 +219,12 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
           </div>
           <div className="ctrl-traffic-metric-title">Backend Response Payload</div>
           <div className="ctrl-traffic-rate-val text-primary">
-            {summary ? formatBytesPerSec(summary.upstream_ingress_bytes_per_sec) : '0.0 B/s'}
+            {summary && summary.is_available ? formatBytesPerSec(summary.upstream_ingress_bytes_per_sec) : '0.0 B/s'}
           </div>
           <div className="ctrl-traffic-cumulative-box">
-            <span className="text-muted">Cumulative Payload</span>
+            <span className="text-muted">Routing Path</span>
             <span className="font-mono font-bold text-primary">
-              {summary ? formatBytes(summary.upstream_ingress_bytes_total) : '0 B'}
+              Regional Services
             </span>
           </div>
         </div>
@@ -402,9 +402,9 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
               }}
             >
               <span className="text-muted">Time: {new Date(hoveredPoint.timestamp).toLocaleTimeString()}</span>
-              <span className="text-flow">Ingress: {formatBytesPerSec(hoveredPoint.client_ingress_bytes_per_sec)}</span>
-              <span className="text-healthy">Egress: {formatBytesPerSec(hoveredPoint.client_egress_bytes_per_sec)}</span>
-              <span style={{ color: '#f59e0b' }}>RPS: {hoveredPoint.requests_per_sec.toFixed(1)} req/s</span>
+              <span className="text-flow">Ingress: {formatBytesPerSec(hoveredPoint.client_ingress_rate)}</span>
+              <span className="text-healthy">Egress: {formatBytesPerSec(hoveredPoint.client_egress_rate)}</span>
+              <span style={{ color: '#f59e0b' }}>RPS: {hoveredPoint.request_rate.toFixed(1)} req/s</span>
               <span className="text-muted">P95: {hoveredPoint.latency_p95_ms.toFixed(1)}ms</span>
             </div>
           )}
@@ -514,8 +514,8 @@ export const ControllerNetworkTrafficTab: React.FC<ControllerNetworkTrafficTabPr
             </div>
 
             <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-              <span>Gateway Instance: {summary?.active_gateway_instances?.join(', ') || 'gateway-primary'}</span>
-              <span>Telemetry Source: {summary?.measurement_source || 'application_payload'}</span>
+              <span>Gateway Instance: {summary?.measurement_source || '—'}</span>
+              <span>Telemetry Source: {summary?.measurement_type || 'application_payload_bytes'}</span>
             </div>
           </div>
         </div>

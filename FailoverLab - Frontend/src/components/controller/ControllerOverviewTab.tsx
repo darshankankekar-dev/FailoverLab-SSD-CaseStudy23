@@ -43,11 +43,11 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
   isBackendConnected,
   onNavigateTab,
 }) => {
-  const activeRegionId = controllerState?.active_region || 'region-a';
-  const epoch = controllerState?.fencing_epoch ?? 101;
-  const cState = controllerState?.controller_state || 'HEALTHY';
-  const replLag = controllerState?.replication?.lag_seconds ?? 0;
-  const replStatus = controllerState?.replication?.status ?? 'STREAMING';
+  const activeRegionId = controllerState?.active_region || '—';
+  const epoch = controllerState?.fencing_epoch !== undefined ? controllerState.fencing_epoch : '—';
+  const cState = controllerState?.controller_state || (isBackendConnected ? 'Loading' : 'DISCONNECTED');
+  const replLag = controllerState?.replication?.lag_seconds;
+  const replStatus = controllerState?.replication?.status || (isBackendConnected ? 'Unavailable' : 'Disconnected');
 
   // Compute healthy and unavailable regions
   const regionsList = controllerState?.regions || [
@@ -58,6 +58,7 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
     controllerState?.region_e,
   ].filter(Boolean);
 
+  const hasRegionData = regionsList.length > 0;
   const healthyCount = regionsList.filter((r) => r && r.health === 'HEALTHY').length;
   const totalRegionsCount = 5;
   const unavailableCount = totalRegionsCount - healthyCount;
@@ -78,13 +79,15 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
             <ShieldCheck size={16} className="text-flow" />
           </div>
           <div className="ctrl-vital-value text-flow">
-            {REGION_METADATA[activeRegionId]?.city || activeRegionId}
+            {activeRegionId !== '—' ? (REGION_METADATA[activeRegionId]?.city || activeRegionId) : '—'}
           </div>
           <div className="ctrl-vital-sub">
             <span className="font-mono text-xs text-muted">
-              {activeRegionId} • {REGION_METADATA[activeRegionId]?.zone || 'primary'}
+              {activeRegionId !== '—' ? `${activeRegionId} • ${REGION_METADATA[activeRegionId]?.zone || 'primary'}` : 'Not assigned'}
             </span>
-            <span className="badge-tag-sm badge-info font-mono">Epoch #{epoch}</span>
+            <span className="badge-tag-sm badge-info font-mono">
+              {typeof epoch === 'number' ? `Epoch #${epoch}` : 'Epoch —'}
+            </span>
           </div>
         </div>
 
@@ -95,10 +98,14 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
             <Server size={16} className="text-healthy" />
           </div>
           <div className="ctrl-vital-value text-healthy">
-            {healthyCount} / {totalRegionsCount}
+            {hasRegionData ? `${healthyCount} / ${totalRegionsCount}` : '—'}
           </div>
           <div className="ctrl-vital-sub">
-            {unavailableCount === 0 ? (
+            {!hasRegionData ? (
+              <span className="text-muted flex items-center gap-1">
+                Loading regional states...
+              </span>
+            ) : unavailableCount === 0 ? (
               <span className="text-healthy flex items-center gap-1">
                 <CheckCircle2 size={12} /> All regions operational
               </span>
@@ -117,15 +124,15 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
             <Activity size={16} className="text-flow" />
           </div>
           <div className="ctrl-vital-value">
-            {trafficSummary ? formatBytesPerSec(trafficSummary.client_ingress_bytes_per_sec) : '0.0 B/s'}
+            {trafficSummary && trafficSummary.is_available ? formatBytesPerSec(trafficSummary.current_ingress_bytes_per_sec) : '0.0 B/s'}
           </div>
           <div className="ctrl-vital-sub">
             <span className="font-mono">
-              {trafficSummary ? trafficSummary.requests_per_sec.toFixed(1) : '0.0'} req/s
+              {trafficSummary && trafficSummary.is_available ? trafficSummary.request_rate.toFixed(1) : '0.0'} req/s
             </span>
             <span className="text-muted">•</span>
             <span className="text-muted">
-              P95 {trafficSummary ? `${trafficSummary.latency_p95_ms.toFixed(1)}ms` : '0ms'}
+              P95 {trafficSummary && trafficSummary.is_available ? `${trafficSummary.latency_p95_ms.toFixed(1)}ms` : '—'}
             </span>
           </div>
         </div>
@@ -137,12 +144,12 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
             <GitBranch size={16} className="text-warning" />
           </div>
           <div className="ctrl-vital-value font-mono">
-            {replLag.toFixed(2)}s
+            {replLag !== undefined ? `${replLag.toFixed(2)}s` : '—'}
           </div>
           <div className="ctrl-vital-sub">
             <span className="badge-tag-sm badge-info font-mono">{replStatus}</span>
             <span className="text-muted">
-              Bandwidth: {controllerState?.replication?.bandwidth_mbps || 100} Mbps
+              Bandwidth: {controllerState?.replication?.bandwidth_mbps !== undefined ? `${controllerState.replication.bandwidth_mbps} Mbps` : '—'}
             </span>
           </div>
         </div>
@@ -172,7 +179,8 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
               const regData = regionsList.find((r) => r && r.id === rId);
               const trafficItem = regionalTraffic.find((t) => t.region_id === rId);
               const isWriter = rId === activeRegionId;
-              const isHealthy = regData?.health === 'HEALTHY' || (!regData && isBackendConnected);
+              const isHealthy = regData?.health === 'HEALTHY';
+              const healthStatus = regData?.health || (isBackendConnected ? 'Not reported' : 'Unavailable');
 
               return (
                 <div
@@ -201,7 +209,7 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
                         className={`ctrl-region-meta-val ${isHealthy ? 'text-healthy' : 'text-danger'
                           }`}
                       >
-                        {regData?.health || (isHealthy ? 'HEALTHY' : 'DOWN')}
+                        {healthStatus}
                       </span>
                     </div>
 
@@ -213,20 +221,24 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
                     </div>
 
                     <div className="ctrl-region-meta-item">
-                      <span className="ctrl-region-meta-label">Payload Rate</span>
+                      <span className="ctrl-region-meta-label">Gateway → Region</span>
                       <span className="ctrl-region-meta-val font-mono">
-                        {trafficItem && trafficItem.ingress_bytes_per_sec > 0
-                          ? formatBytesPerSec(trafficItem.ingress_bytes_per_sec)
-                          : isWriter && trafficSummary && trafficSummary.client_ingress_bytes_per_sec > 0
-                            ? formatBytesPerSec(trafficSummary.client_ingress_bytes_per_sec)
-                            : '0.0 B/s (Idle)'}
+                        {trafficItem && trafficItem.upstream_egress_rate > 0
+                          ? formatBytesPerSec(trafficItem.upstream_egress_rate)
+                          : '0.0 B/s (Idle)'}
                       </span>
                     </div>
 
                     <div className="ctrl-region-meta-item">
                       <span className="ctrl-region-meta-label">Replication</span>
                       <span className="ctrl-region-meta-val font-mono">
-                        {isWriter ? 'SOURCE' : `${(regData?.replication_lag_seconds ?? replLag).toFixed(1)}s lag`}
+                        {isWriter
+                          ? 'SOURCE'
+                          : regData?.replication_lag_seconds !== undefined
+                            ? `${regData.replication_lag_seconds.toFixed(1)}s lag`
+                            : replLag !== undefined
+                              ? `${replLag.toFixed(1)}s lag`
+                              : '—'}
                       </span>
                     </div>
                   </div>
@@ -267,28 +279,28 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
                       ? 'text-warning'
                       : 'text-danger'
                 }>
-                  {trafficSummary?.telemetry_freshness || (isBackendConnected ? 'FRESH' : 'UNAVAILABLE')}
+                  {trafficSummary?.telemetry_freshness || (isBackendConnected ? 'PENDING' : 'UNAVAILABLE')}
                 </div>
               </div>
 
               <div style={{ padding: '0.65rem', background: 'var(--bg-panel)', borderRadius: '4px' }}>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Reporting Source</div>
                 <div style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
-                  {trafficSummary?.measurement_source || 'application_payload'}
+                  {trafficSummary?.measurement_source || '—'}
                 </div>
               </div>
 
               <div style={{ padding: '0.65rem', background: 'var(--bg-panel)', borderRadius: '4px' }}>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Cumulative Ingress</div>
                 <div style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }} className="text-flow">
-                  {trafficSummary ? formatBytes(trafficSummary.client_ingress_bytes_total) : '0 B'}
+                  {trafficSummary && trafficSummary.is_available ? formatBytes(trafficSummary.cumulative_ingress_bytes) : '0 B'}
                 </div>
               </div>
 
               <div style={{ padding: '0.65rem', background: 'var(--bg-panel)', borderRadius: '4px' }}>
                 <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Cumulative Egress</div>
                 <div style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }} className="text-healthy">
-                  {trafficSummary ? formatBytes(trafficSummary.client_egress_bytes_total) : '0 B'}
+                  {trafficSummary && trafficSummary.is_available ? formatBytes(trafficSummary.cumulative_egress_bytes) : '0 B'}
                 </div>
               </div>
             </div>
@@ -333,13 +345,21 @@ export const ControllerOverviewTab: React.FC<ControllerOverviewTabProps> = ({
                 </div>
 
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
-                  {latestFailoverEvent.reason || 'Controller initialized and maintaining primary lease consensus.'}
+                  {latestFailoverEvent.reason || 'Controller active and monitoring consensus.'}
                 </div>
 
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-                  <span className="badge-tag-sm badge-healthy">Quorum Verified (3/3)</span>
-                  <span className="badge-tag-sm badge-healthy">Fencing Enforced (Epoch #{epoch})</span>
-                  <span className="badge-tag-sm badge-healthy">Replication Guard Pass</span>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                  <span className="badge-tag-sm badge-info">
+                    {controllerState?.voters && controllerState.voters.length > 0
+                      ? `Quorum Peers (${controllerState.voters.filter(v => v.vote === 'PRIMARY_HEALTHY' || v.vote === 'PRIMARY_OUTAGE').length}/${controllerState.voters.length})`
+                      : 'Quorum (Consensus Active)'}
+                  </span>
+                  <span className="badge-tag-sm badge-info font-mono">
+                    {typeof epoch === 'number' ? `Epoch #${epoch}` : 'Epoch —'}
+                  </span>
+                  <span className="badge-tag-sm badge-info font-mono">
+                    Replication: {replStatus}
+                  </span>
                 </div>
               </div>
             ) : (

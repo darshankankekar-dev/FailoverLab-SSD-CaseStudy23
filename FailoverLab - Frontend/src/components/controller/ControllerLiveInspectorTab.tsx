@@ -37,7 +37,18 @@ export const ControllerLiveInspectorTab: React.FC<ControllerLiveInspectorTabProp
     let mounted = true;
     controllerClient.fetchTrafficEvents(1, 50).then((res) => {
       if (mounted && res && res.events) {
-        setEvents(res.events);
+        setEvents((prev) => {
+          const seen = new Set<string>();
+          const deduped: TrafficEventItemDto[] = [];
+          for (const ev of [...res.events, ...prev]) {
+            const key = ev.id || ev.request_id;
+            if (key && !seen.has(key)) {
+              seen.add(key);
+              deduped.push(ev);
+            }
+          }
+          return deduped.slice(0, MAX_EVENT_BUFFER);
+        });
       }
     });
 
@@ -47,6 +58,10 @@ export const ControllerLiveInspectorTab: React.FC<ControllerLiveInspectorTabProp
       (ev) => {
         if (isPausedRef.current) return;
         setEvents((prev) => {
+          const key = ev.id || ev.request_id;
+          if (key && prev.some((e) => (e.id || e.request_id) === key)) {
+            return prev;
+          }
           const next = [ev, ...prev];
           return next.length > MAX_EVENT_BUFFER ? next.slice(0, MAX_EVENT_BUFFER) : next;
         });
@@ -322,12 +337,12 @@ export const ControllerLiveInspectorTab: React.FC<ControllerLiveInspectorTabProp
 
                         {/* Payload Ingress Bytes */}
                         <td className="font-mono text-xs text-flow">
-                          {formatBytes(ev.payload_ingress_bytes)}
+                          {formatBytes(ev.request_payload_bytes)}
                         </td>
 
                         {/* Payload Egress Bytes */}
                         <td className="font-mono text-xs text-healthy">
-                          {formatBytes(ev.payload_egress_bytes)}
+                          {formatBytes(ev.response_payload_bytes)}
                         </td>
 
                         {/* Latency */}

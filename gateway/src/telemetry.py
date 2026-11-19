@@ -57,6 +57,8 @@ def detect_traffic_source(headers_map: Dict[str, str], path: str) -> str:
         return "load_generator"
     if traffic_src in {"online_store", "store", "customer", "shopper"}:
         return "online_store"
+    if traffic_src in {"internal", "system", "health", "management"}:
+        return "internal"
 
     client_id = headers_map.get("x-client-id", "").lower().strip()
     if any(k in client_id for k in ("load-generator", "loadgen", "synthetic", "benchmark")):
@@ -70,24 +72,29 @@ def detect_traffic_source(headers_map: Dict[str, str], path: str) -> str:
 
     # Check path characteristics
     if (
-        path.startswith("/health/")
+        path.startswith("/health")
         or path.startswith("/internal/")
         or path == "/metrics"
+        or path.startswith("/api/v1/traffic")
+        or path.startswith("/api/traffic")
         or path.startswith("/api/v1/route")
         or path.startswith("/api/v1/routing")
+        or path.startswith("/api/v1/state")
     ):
         return "internal"
 
-    # Default to online_store for store endpoints
+    # Store customer endpoints (including test harness routes)
     if (
         path.startswith("/api/ecommerce/")
         or path.startswith("/api/shop/")
         or path.startswith("/api/records")
         or path.startswith("/api/data/records")
+        or path.startswith("/test/")
     ):
         return "online_store"
 
-    return "online_store"
+    # Default unknown/unclassified requests to internal to avoid inflating customer stats
+    return "internal"
 
 
 class RegionalUpstreamMetrics:
@@ -148,6 +155,7 @@ class RegionalUpstreamMetrics:
         return round(s[max(0, min(idx, len(s) - 1))], 2)
 
     def to_dict(self) -> Dict[str, Any]:
+        avg_lat = self.get_avg_latency()
         return {
             "region_id": self.region_id,
             "requests_total": self.requests_total,
@@ -159,7 +167,8 @@ class RegionalUpstreamMetrics:
             "status_5xx": self.status_5xx,
             "failed_requests": self.failed_requests,
             "timeouts": self.timeouts,
-            "average_duration_ms": self.get_avg_latency(),
+            "average_duration_ms": avg_lat,
+            "average_latency_ms": avg_lat,
             "p95_duration_ms": self.get_p95_latency(),
         }
 
@@ -336,35 +345,38 @@ class GatewayTelemetryCollector:
         self.last_measurement_timestamp = now_iso
         self.last_measurement_epoch = now_mono
 
-        # 1. Update cumulative customer-facing counters
-        self.total_requests += 1
-        self.cumulative_ingress_bytes += max(0, ingress_bytes)
-        self.cumulative_egress_bytes += max(0, egress_bytes)
-        self.latencies_ms.append(duration_ms)
+        # 1. Update source-specific and request-class counters
+        src = traffic_source if traffic_source in self.traffic_sources else "internal"
+        self.traffic_sources[src].record(ingress_bytes, egress_bytes, duration_ms, status_code)
 
-        if status_code == 429:
-            self.rate_limited_429 += 1
-            self.status_4xx += 1
-        elif 200 <= status_code < 300:
-            self.status_2xx += 1
-        elif 300 <= status_code < 400:
-            self.status_3xx += 1
-        elif 400 <= status_code < 500:
-            self.status_4xx += 1
-        elif status_code >= 500:
-            self.status_5xx += 1
-
-        # 2. Append to 1-second rate window
-        self._rate_window.append((now_mono, max(0, ingress_bytes), max(0, egress_bytes)))
-        self._prune_rate_window(now_mono)
-
-        # 3. Update request class breakdown
         req_cls = request_class if request_class in self.request_classes else "system"
         self.request_classes[req_cls].record(ingress_bytes, egress_bytes, duration_ms)
 
-        # 4. Update traffic source breakdown
-        src = traffic_source if traffic_source in self.traffic_sources else "online_store"
-        self.traffic_sources[src].record(ingress_bytes, egress_bytes, duration_ms, status_code)
+        # Update gateway status code counters for all non-internal client requests
+        if src != "internal":
+            if status_code == 429:
+                self.rate_limited_429 += 1
+                self.status_4xx += 1
+            elif 200 <= status_code < 300:
+                self.status_2xx += 1
+            elif 300 <= status_code < 400:
+                self.status_3xx += 1
+            elif 400 <= status_code < 500:
+                self.status_4xx += 1
+            elif status_code >= 500:
+                self.status_5xx += 1
+
+        # 2. Primary customer-facing cumulative counters & rolling rate window
+        # represent actual Online Store customer traffic, NOT internal or synthetic loadgen traffic.
+        if src == "online_store":
+            self.total_requests += 1
+            self.cumulative_ingress_bytes += max(0, ingress_bytes)
+            self.cumulative_egress_bytes += max(0, egress_bytes)
+            self.latencies_ms.append(duration_ms)
+
+            # Append to 1-second rate window for real-time customer rate
+            self._rate_window.append((now_mono, max(0, ingress_bytes), max(0, egress_bytes)))
+            self._prune_rate_window(now_mono)
 
     def record_upstream(
         self,
@@ -444,7 +456,7 @@ class GatewayTelemetryCollector:
                 "measurement_type": "application_payload_bytes",
                 "is_measured": True,
                 "unit": "bytes",
-                "note": "Application/API payload bytes measured at ASGI/HTTP proxy boundaries.",
+                "note": "Application/API payload bytes measured at ASGI/HTTP proxy boundaries. Excludes TCP/IP/TLS frame overhead and static assets served directly by Nginx.",
             },
             "customer_facing": {
                 "cumulative": {
@@ -554,6 +566,8 @@ class ASGITrafficTelemetryMiddleware:
         egress_bytes = 0
         response_status = 200
 
+        served_region_captured: Optional[str] = None
+
         async def telemetry_receive():
             nonlocal ingress_bytes, body_chunks_received
             message = await receive()
@@ -566,10 +580,19 @@ class ASGITrafficTelemetryMiddleware:
             return message
 
         async def telemetry_send(message):
-            nonlocal egress_bytes, response_status
+            nonlocal egress_bytes, response_status, served_region_captured
             if message["type"] == "http.response.start":
                 response_status = message["status"]
                 telemetry_info["status_code"] = response_status
+                # Inspect response headers for actual served/routed region
+                raw_resp_headers = message.get("headers", [])
+                for k_b, v_b in raw_resp_headers:
+                    try:
+                        k_str = k_b.decode("latin1").lower()
+                        if k_str in ("x-served-region", "x-routed-to-region"):
+                            served_region_captured = v_b.decode("latin1").strip()
+                    except Exception:
+                        pass
             elif message["type"] == "http.response.body":
                 chunk = message.get("body", b"")
                 if chunk:
@@ -610,9 +633,15 @@ class ASGITrafficTelemetryMiddleware:
             telemetry_info["egress_bytes"] = egress_bytes
             telemetry_info["duration_ms"] = duration_ms
 
-            # Determine request class and served region from scope_state
+            # Determine request class and served region from response headers or scope_state
             req_class = scope_state.get("request_type") or "system"
-            served_region = scope_state.get("routed_region") or scope_state.get("active_target") or "region-a"
+            served_region = (
+                served_region_captured
+                or scope_state.get("routed_region")
+                or scope_state.get("upstream_region")
+                or scope_state.get("active_target")
+                or "region-a"
+            )
 
             # Record customer-facing telemetry
             telemetry_collector.record_client_request(

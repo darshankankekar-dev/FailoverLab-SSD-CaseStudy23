@@ -121,7 +121,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(ASGITrafficTelemetryMiddleware)
+# Note: ASGITrafficTelemetryMiddleware is added after logging_and_traffic_middleware
+# so that it wraps as the outermost middleware, accurately measuring client bodies and responses.
 
 
 def classify_request_type(method: str, path: str) -> str:
@@ -204,20 +205,11 @@ async def logging_and_traffic_middleware(request: Request, call_next):
                         "X-RateLimit-Reset": str(retry_after),
                         "X-RateLimit-Mode": "TOKEN_BUCKET",
                         "X-Request-ID": request_id,
+                        "X-Served-Region": route_table.active_target,
+                        "X-Routed-To-Region": route_table.active_target,
                     },
                 )
                 resp_payload_bytes = len(resp_429.body) if hasattr(resp_429, "body") else 0
-                telemetry_collector.record_client_request(
-                    method=request.method,
-                    path=path,
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    ingress_bytes=req_payload_bytes,
-                    egress_bytes=resp_payload_bytes,
-                    duration_ms=0.5,
-                    traffic_source=traffic_src,
-                    request_class=classify_request_type(request.method, path),
-                    served_region=route_table.active_target,
-                )
                 await traffic_coordinator.record_traffic_event(
                     TrafficEvent(
                         request_id=request_id,
@@ -265,20 +257,11 @@ async def logging_and_traffic_middleware(request: Request, call_next):
                             "X-RateLimit-Limit": str(traffic_coordinator.leaky_shaper.queue_capacity),
                             "X-RateLimit-Mode": "LEAKY_BUCKET",
                             "X-Request-ID": request_id,
+                            "X-Served-Region": route_table.active_target,
+                            "X-Routed-To-Region": route_table.active_target,
                         },
                     )
                     resp_payload_bytes = len(resp_429.body) if hasattr(resp_429, "body") else 0
-                    telemetry_collector.record_client_request(
-                        method=request.method,
-                        path=path,
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        ingress_bytes=req_payload_bytes,
-                        egress_bytes=resp_payload_bytes,
-                        duration_ms=0.5,
-                        traffic_source=traffic_src,
-                        request_class=classify_request_type(request.method, path),
-                        served_region=route_table.active_target,
-                    )
                     await traffic_coordinator.record_traffic_event(
                         TrafficEvent(
                             request_id=request_id,
@@ -447,6 +430,11 @@ async def logging_and_traffic_middleware(request: Request, call_next):
     return response
 
 
+# Add ASGITrafficTelemetryMiddleware as the outermost middleware layer so that it
+# reliably intercepts all requests, responses, streaming chunks, and rate-limit rejections.
+app.add_middleware(ASGITrafficTelemetryMiddleware)
+
+
 # =========================================================================
 # Security & Internal Authentication Dependency
 # =========================================================================
@@ -474,6 +462,19 @@ async def verify_internal_auth(
 # =========================================================================
 # Health & Status Endpoints
 # =========================================================================
+
+@app.get("/health", tags=["Health"])
+async def health_check() -> Dict[str, Any]:
+    """Returns gateway diagnostic health and exporter status."""
+    exporter_status = telemetry_exporter.get_status()
+    return {
+        "status": "healthy" if exporter_status["is_healthy"] else "degraded",
+        "service": "failoverlab-gateway",
+        "active_target": route_table.active_target,
+        "exporter": exporter_status,
+        **exporter_status,
+    }
+
 
 @app.get("/health/live", tags=["Health"])
 async def live_check() -> Dict[str, str]:
@@ -913,7 +914,15 @@ async def _execute_backend_request(request: Request, path: str, decision: RouteD
         request.state.upstream_status = backend_resp.status_code
         request.state.response_payload_bytes = up_resp_bytes
 
-        resp_headers = dict(backend_resp.headers)
+        resp_headers = {
+            k: v for k, v in backend_resp.headers.items()
+            if k.lower() not in {
+                "x-request-id", "x-correlation-id", "x-served-region",
+                "x-active-region", "x-routed-to-region", "x-consistency-level",
+                "x-route-reason", "x-gateway-latency-ms", "x-simulated-wan-delay-ms",
+                "x-replication-lag-sec", "x-client-region", "content-length",
+            }
+        }
         req_id = getattr(request.state, "request_id", None) or f"req-{uuid.uuid4().hex[:10]}"
 
         # Decorate response with required metadata headers

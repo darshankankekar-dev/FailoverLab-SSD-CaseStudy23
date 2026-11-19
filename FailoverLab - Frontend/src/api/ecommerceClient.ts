@@ -142,6 +142,7 @@ class EcommerceClient {
       'Accept': 'application/json',
       'X-Client-Region': clientRegion,
       'X-Client-ID': `shopper-${clientRegion}`,
+      'X-Traffic-Source': 'online_store',
       ...(options.headers as Record<string, string> || {}),
     };
 

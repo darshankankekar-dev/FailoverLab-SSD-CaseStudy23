@@ -63,7 +63,11 @@ export const ControllerDashboardView: React.FC<ControllerDashboardViewProps> = (
       }
 
       if (regionalRes && regionalRes.regions) {
-        setRegionalTraffic(regionalRes.regions);
+        // Backend returns Record<string, RegionalTrafficItemDto>; normalize to array
+        const regionsArray = Object.values(regionalRes.regions);
+        setRegionalTraffic(regionsArray);
+      } else {
+        setRegionalTraffic([]);
       }
 
       if (eventsRes) {
@@ -112,7 +116,7 @@ export const ControllerDashboardView: React.FC<ControllerDashboardViewProps> = (
   };
 
   const isStale = trafficSummary?.telemetry_freshness === 'STALE' || (
-    Date.now() - lastFetchTime.getTime() > 4000 && !isPaused
+    Date.now() - lastFetchTime.getTime() > 4000 && !isPaused && trafficSummary?.telemetry_freshness === 'FRESH'
   );
 
   return (

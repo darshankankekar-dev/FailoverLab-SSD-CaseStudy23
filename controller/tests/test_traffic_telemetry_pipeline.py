@@ -675,3 +675,372 @@ async def test_gateway_exporter_retry_and_resilience():
 
     # Clean shutdown
     await exporter.stop()
+
+
+@pytest.mark.asyncio
+async def test_summary_response_canonical_contract(client: AsyncClient):
+    """Verifies all 24 required fields are present in /api/v1/traffic/summary matching canonical contract."""
+    batch = make_valid_batch(batch_id="batch-summary-contract")
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=batch,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+    resp = await client.get("/api/v1/traffic/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    required_fields = [
+        "current_ingress_bytes_per_sec",
+        "current_egress_bytes_per_sec",
+        "cumulative_ingress_bytes",
+        "cumulative_egress_bytes",
+        "upstream_ingress_bytes_per_sec",
+        "upstream_egress_bytes_per_sec",
+        "request_rate",
+        "total_requests",
+        "status_2xx",
+        "status_3xx",
+        "status_4xx",
+        "status_5xx",
+        "rate_limited_429",
+        "latency_avg_ms",
+        "latency_p50_ms",
+        "latency_p95_ms",
+        "latency_p99_ms",
+        "last_received_timestamp",
+        "telemetry_freshness",
+        "telemetry_age_seconds",
+        "is_available",
+        "measurement_source",
+        "measurement_unit",
+        "measurement_type",
+        "note",
+    ]
+    for field in required_fields:
+        assert field in data, f"Missing field in summary contract: {field}"
+
+    assert data["measurement_unit"] == "bytes"
+    assert data["measurement_type"] == "application_payload_bytes"
+    assert data["measurement_source"] == "gateway-1"
+    assert data["is_available"] is True
+    assert data["telemetry_freshness"] in ("FRESH", "STALE", "UNAVAILABLE")
+
+
+@pytest.mark.asyncio
+async def test_timeseries_historical_merge_persisted_and_in_memory(client: AsyncClient, db_session: AsyncSession):
+    """
+    Verifies timeseries query merges older persisted database records with newer in-memory
+    samples, ensuring older history is not omitted.
+    """
+    now = datetime.now(timezone.utc)
+    t_old = now - timedelta(seconds=200)
+    t_mid = now - timedelta(seconds=100)
+    t_new = now - timedelta(seconds=2)
+
+    # 1. Insert an older sample directly into DB (simulating persisted history before a restart)
+    old_sample = TrafficSampleEntity(
+        batch_id="batch-db-old",
+        gateway_instance_id="gateway-1",
+        timestamp=t_old,
+        interval_seconds=1.0,
+        client_ingress_bytes=5000,
+        client_egress_bytes=10000,
+        client_ingress_rate=500.0,
+        client_egress_rate=1000.0,
+        upstream_ingress_bytes=8000,
+        upstream_egress_bytes=4000,
+        upstream_ingress_rate=800.0,
+        upstream_egress_rate=400.0,
+        request_count=50,
+        request_rate=5.0,
+        status_2xx=50,
+        status_3xx=0,
+        status_4xx=0,
+        status_5xx=0,
+        rate_limited_429=0,
+        latency_avg_ms=20.0,
+        latency_p50_ms=18.0,
+        latency_p95_ms=30.0,
+        latency_p99_ms=45.0,
+        regional_traffic_json={},
+        traffic_sources_json={},
+        dropped_telemetry_count=0,
+    )
+    db_session.add(old_sample)
+    await db_session.commit()
+
+    # 2. Ingest newer sample via standard endpoint (populates in-memory buffer)
+    batch_new = make_valid_batch(
+        batch_id="batch-mem-new",
+        timestamp=t_new,
+        ingress_bytes=25000,
+        egress_bytes=50000,
+        request_count=250,
+    )
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=batch_new,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+
+    # 3. Query timeseries spanning 300 seconds (should include both DB sample and in-memory sample)
+    resp = await client.get("/api/v1/traffic/timeseries?time_range_seconds=300&step_seconds=1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["point_count"] >= 2
+
+    # Check required fields on every point
+    for pt in data["points"]:
+        for field in [
+            "timestamp", "client_ingress_bytes", "client_egress_bytes",
+            "client_ingress_rate", "client_egress_rate", "upstream_ingress_rate",
+            "upstream_egress_rate", "request_rate", "error_rate", "status_2xx",
+            "status_4xx", "status_5xx", "latency_p95_ms"
+        ]:
+            assert field in pt, f"Missing field in timeseries point: {field}"
+
+    # Verify both the old and new points are present
+    ingress_values = [p["client_ingress_bytes"] for p in data["points"]]
+    assert 5000 in ingress_values, "Older DB sample was omitted from timeseries response!"
+    assert 25000 in ingress_values, "Newer in-memory sample was missing from timeseries response!"
+
+
+@pytest.mark.asyncio
+async def test_regional_traffic_rates_and_counter_reset(client: AsyncClient):
+    """
+    Verifies that regional rates (request_rate, upstream_ingress_rate, upstream_egress_rate)
+    are calculated accurately from consecutive batches per Gateway instance and handle counter resets.
+    """
+    t0 = datetime.now(timezone.utc) - timedelta(seconds=2)
+    t1 = datetime.now(timezone.utc)
+
+    # Batch 1 at T0
+    b1 = make_valid_batch(batch_id="batch-reg-rate-1", timestamp=t0, interval_seconds=1.0)
+    b1["regional_traffic"]["region-a"]["requests_total"] = 100
+    b1["regional_traffic"]["region-a"]["request_payload_bytes"] = 10000   # upstream egress
+    b1["regional_traffic"]["region-a"]["response_payload_bytes"] = 30000  # upstream ingress
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=b1,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+
+    # Initial batch: rates should be 0.0 (baseline)
+    r1 = (await client.get("/api/v1/traffic/regions")).json()
+    assert r1["regions"]["region-a"]["requests_total"] == 100
+    assert r1["regions"]["region-a"]["request_rate"] == 0.0
+
+    # Batch 2 at T1 (elapsed ~ 2.0s)
+    b2 = make_valid_batch(batch_id="batch-reg-rate-2", timestamp=t1, interval_seconds=1.0)
+    b2["regional_traffic"]["region-a"]["requests_total"] = 130            # +30 requests
+    b2["regional_traffic"]["region-a"]["request_payload_bytes"] = 13000   # +3000 bytes egress
+    b2["regional_traffic"]["region-a"]["response_payload_bytes"] = 36000  # +6000 bytes ingress
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=b2,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+
+    r2 = (await client.get("/api/v1/traffic/regions")).json()
+    reg_a = r2["regions"]["region-a"]
+    assert reg_a["requests_total"] == 130
+    assert reg_a["upstream_request_bytes"] == 13000
+    assert reg_a["upstream_response_bytes"] == 36000
+    assert reg_a["request_rate"] > 0.0
+    assert reg_a["upstream_egress_rate"] > 0.0
+    assert reg_a["upstream_ingress_rate"] > 0.0
+
+    # Batch 3: Counter reset (counters drop to low numbers after gateway restart)
+    t2 = datetime.now(timezone.utc) + timedelta(seconds=2)
+    b3 = make_valid_batch(batch_id="batch-reg-rate-3", timestamp=t2, interval_seconds=1.0)
+    b3["regional_traffic"]["region-a"]["requests_total"] = 5
+    b3["regional_traffic"]["region-a"]["request_payload_bytes"] = 500
+    b3["regional_traffic"]["region-a"]["response_payload_bytes"] = 1200
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=b3,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+
+    r3 = (await client.get("/api/v1/traffic/regions")).json()
+    reg_a_reset = r3["regions"]["region-a"]
+    assert reg_a_reset["requests_total"] == 5
+    assert reg_a_reset["request_rate"] >= 0.0
+    assert reg_a_reset["upstream_egress_rate"] >= 0.0
+    assert reg_a_reset["upstream_ingress_rate"] >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_recent_events_pagination_newest_first_and_filtering(client: AsyncClient):
+    """
+    Verifies /api/v1/traffic/recent-events returns newest events first, provides full schema,
+    supports pagination, and filters by criteria.
+    """
+    t_now = datetime.now(timezone.utc)
+    events = [
+        {
+            "id": f"evt-{i}",
+            "request_id": f"req-{i}",
+            "timestamp": (t_now - timedelta(seconds=10 - i)).isoformat(),
+            "method": "POST" if i % 2 == 0 else "GET",
+            "endpoint": f"/api/ecommerce/item/{i}",
+            "client_region": "eu-central-1",
+            "served_region": "region-a" if i < 3 else "region-b",
+            "request_type": "write" if i % 2 == 0 else "eventual_read",
+            "rate_limiter_decision": "accepted",
+            "status_code": 200,
+            "duration_ms": 10.0 + i,
+            "request_payload_bytes": 100 * i,
+            "response_payload_bytes": 200 * i,
+            "request_category": "order_checkout" if i % 2 == 0 else "product_read",
+            "upstream_region": "region-a" if i < 3 else "region-b",
+            "upstream_request_bytes": 100 * i,
+            "upstream_response_bytes": 200 * i,
+            "traffic_source": "online_store" if i < 4 else "synthetic_load",
+        }
+        for i in range(6)
+    ]
+    batch = make_valid_batch(batch_id="batch-events-rich")
+    batch["events"] = events
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=batch,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+
+    # 1. Fetch newest events (page 1, page_size 2)
+    resp = await client.get("/api/v1/traffic/recent-events?page=1&page_size=2")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 6
+    assert len(data["events"]) == 2
+    # Newest first: evt-5 must be the first item
+    assert data["events"][0]["id"] == "evt-5"
+    assert data["events"][0]["request_id"] == "req-5"
+    assert data["events"][1]["id"] == "evt-4"
+
+    # Verify all required event fields are present
+    first_evt = data["events"][0]
+    for field in [
+        "id", "request_id", "timestamp", "method", "endpoint", "client_region",
+        "served_region", "status_code", "request_payload_bytes", "response_payload_bytes",
+        "duration_ms", "request_type", "request_category", "traffic_source",
+        "upstream_region", "upstream_request_bytes", "upstream_response_bytes"
+    ]:
+        assert field in first_evt, f"Missing field in event model: {field}"
+
+    # 2. Filter by served_region='region-b' (events 3, 4, 5)
+    r_filtered = await client.get("/api/v1/traffic/recent-events?served_region=region-b")
+    assert r_filtered.status_code == 200
+    d_filtered = r_filtered.json()
+    assert d_filtered["total"] == 3
+    for ev in d_filtered["events"]:
+        assert ev["served_region"] == "region-b"
+
+    # 3. Filter by traffic_source='synthetic_load' (only event 4 and 5)
+    r_source = await client.get("/api/v1/traffic/recent-events?traffic_source=synthetic_load")
+    assert r_source.status_code == 200
+    assert r_source.json()["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_event_deduplication_on_batch_submission(client: AsyncClient):
+    """Verifies that events with duplicate IDs submitted across batches are not duplicated."""
+    ev1 = {
+        "id": "evt-dup-target",
+        "request_id": "req-dup-target",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "method": "GET",
+        "endpoint": "/api/ecommerce/products",
+        "client_region": "eu-central-1",
+        "served_region": "region-a",
+        "request_type": "eventual_read",
+        "rate_limiter_decision": "accepted",
+        "status_code": 200,
+        "duration_ms": 12.0,
+        "request_payload_bytes": 0,
+        "response_payload_bytes": 350,
+        "traffic_source": "online_store",
+    }
+    b1 = make_valid_batch(batch_id="batch-ev-dup-1")
+    b1["events"] = [ev1]
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=b1,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+
+    # Ingest a second different batch containing the same event ID
+    b2 = make_valid_batch(batch_id="batch-ev-dup-2")
+    b2["events"] = [ev1]
+    await client.post(
+        "/internal/telemetry/traffic-batch",
+        json=b2,
+        headers={"X-Internal-Secret": "internal-secret-token"},
+    )
+
+    res = await client.get("/api/v1/traffic/recent-events")
+    assert res.status_code == 200
+    events = res.json()["events"]
+    matching = [e for e in events if e["id"] == "evt-dup-target"]
+    assert len(matching) == 1, "Duplicate event ID was not deduplicated!"
+
+
+@pytest.mark.asyncio
+async def test_controller_sse_event_and_metric_broadcasts(client: AsyncClient):
+    """
+    Verifies that when a batch arrives:
+    1. 'traffic_metric' is broadcast.
+    2. 'traffic_event' is broadcast for each newly accepted event.
+    3. Duplicate batch submissions do not broadcast duplicate events.
+    """
+    queue = await traffic_service.subscribe_sse()
+    try:
+        ev = {
+            "id": "evt-sse-broadcast-1",
+            "request_id": "req-sse-broadcast-1",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "method": "POST",
+            "endpoint": "/api/ecommerce/cart",
+            "client_region": "ap-south-1",
+            "served_region": "region-a",
+            "request_type": "write",
+            "rate_limiter_decision": "accepted",
+            "status_code": 201,
+            "duration_ms": 25.0,
+            "request_payload_bytes": 300,
+            "response_payload_bytes": 600,
+            "traffic_source": "online_store",
+        }
+        b = make_valid_batch(batch_id="batch-sse-broadcaster")
+        b["events"] = [ev]
+
+        await client.post(
+            "/internal/telemetry/traffic-batch",
+            json=b,
+            headers={"X-Internal-Secret": "internal-secret-token"},
+        )
+
+        # We should receive 2 messages: 1 traffic_metric and 1 traffic_event
+        received_types = []
+        for _ in range(2):
+            msg = await asyncio.wait_for(queue.get(), timeout=2.0)
+            received_types.append(msg["event"])
+            if msg["event"] == "traffic_event":
+                assert msg["data"]["id"] == "evt-sse-broadcast-1"
+                assert msg["data"]["request_id"] == "req-sse-broadcast-1"
+                assert msg["data"]["endpoint"] == "/api/ecommerce/cart"
+
+        assert "traffic_metric" in received_types
+        assert "traffic_event" in received_types
+
+        # Submit duplicate batch: should be rejected as duplicate and emit NO new SSE messages
+        await client.post(
+            "/internal/telemetry/traffic-batch",
+            json=b,
+            headers={"X-Internal-Secret": "internal-secret-token"},
+        )
+        assert queue.empty()
+    finally:
+        await traffic_service.unsubscribe_sse(queue)

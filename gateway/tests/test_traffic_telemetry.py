@@ -544,3 +544,225 @@ async def test_telemetry_endpoint_and_prometheus_export(async_client):
     assert "failoverlab_gateway_egress_payload_bytes_total" in prom_text
     assert "failoverlab_gateway_upstream_requests_total{region=\"region-a\"}" in prom_text
     assert "failoverlab_gateway_rate_limited_total" in prom_text
+
+
+# =========================================================================
+# Test 13: Multi-chunk request body measurement
+# =========================================================================
+@pytest.mark.asyncio
+async def test_multi_chunk_request_body_measurement(async_client):
+    """
+    Verifies that multi-chunk request bodies streamed to the Gateway are accurately
+    measured chunk-by-chunk by ASGITrafficTelemetryMiddleware without buffering.
+    """
+    chunk1 = b'{"items": [{"id": "item-1"}, '
+    chunk2 = b'{"id": "item-2"}], '
+    chunk3 = b'"note": "streaming-body-test"}'
+    total_expected_ingress = len(chunk1) + len(chunk2) + len(chunk3)
+
+    async def body_stream():
+        yield chunk1
+        yield chunk2
+        yield chunk3
+
+    mock_client = AsyncMock()
+    mock_client.request.return_value = httpx.Response(
+        200,
+        content=b'{"status": "received"}',
+        headers={"content-type": "application/json"},
+    )
+    original_client = gateway_module.http_client
+    gateway_module.http_client = mock_client
+
+    try:
+        res = await async_client.post(
+            "/api/records",
+            content=body_stream(),
+            headers={"Content-Type": "application/json", "X-Traffic-Source": "online_store"},
+        )
+        assert res.status_code == 200
+        assert telemetry_collector.cumulative_ingress_bytes == total_expected_ingress
+    finally:
+        gateway_module.http_client = original_client
+
+
+# =========================================================================
+# Test 14: Internal request exclusion from customer-facing counters
+# =========================================================================
+@pytest.mark.asyncio
+async def test_internal_request_exclusion_from_customer_metrics(async_client):
+    """
+    Verifies that health checks, metrics, and internal management calls:
+    - Are recorded in traffic_sources['internal']
+    - Do NOT inflate customer-facing total_requests, cumulative_ingress_bytes,
+      or cumulative_egress_bytes.
+    """
+    before_reqs = telemetry_collector.total_requests
+    before_in_bytes = telemetry_collector.cumulative_ingress_bytes
+    before_out_bytes = telemetry_collector.cumulative_egress_bytes
+
+    # 1. Health check
+    res_health = await async_client.get("/health/live")
+    assert res_health.status_code == 200
+
+    # 2. Prometheus metrics
+    res_metrics = await async_client.get("/metrics")
+    assert res_metrics.status_code == 200
+
+    # 3. Route query
+    res_route = await async_client.get("/api/v1/route")
+    assert res_route.status_code == 200
+
+    # Customer-facing cumulative metrics must remain unchanged!
+    assert telemetry_collector.total_requests == before_reqs
+    assert telemetry_collector.cumulative_ingress_bytes == before_in_bytes
+    assert telemetry_collector.cumulative_egress_bytes == before_out_bytes
+
+    # Internal traffic source metrics must reflect all 3 requests
+    internal_src = telemetry_collector.traffic_sources["internal"]
+    assert internal_src.requests_total == 3
+    assert internal_src.egress_bytes > 0
+
+
+# =========================================================================
+# Test 15: Synthetic load generator separation from customer metrics
+# =========================================================================
+@pytest.mark.asyncio
+async def test_synthetic_load_generator_separation_from_customer_metrics(async_client):
+    """
+    Verifies that requests bearing X-Traffic-Source: load_generator are isolated:
+    - Recorded under traffic_sources['load_generator']
+    - Excluded from primary customer-facing cumulative ingress/egress/requests.
+    """
+    mock_client = AsyncMock()
+    mock_client.request.return_value = httpx.Response(200, json={"ok": True})
+    original_client = gateway_module.http_client
+    gateway_module.http_client = mock_client
+
+    try:
+        payload = b'{"burst_item": "synthetic-test"}'
+        res = await async_client.post(
+            "/api/ecommerce/orders",
+            content=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Traffic-Source": "load_generator",
+                "X-Client-ID": "load-generator-harness",
+            },
+        )
+        assert res.status_code == 200
+
+        # Customer-facing primary counters must NOT be contaminated by synthetic burst
+        assert telemetry_collector.total_requests == 0
+        assert telemetry_collector.cumulative_ingress_bytes == 0
+
+        # Synthetic source counters must record the burst
+        synth_src = telemetry_collector.traffic_sources["load_generator"]
+        assert synth_src.requests_total == 1
+        assert synth_src.ingress_bytes == len(payload)
+        assert synth_src.status_2xx == 1
+    finally:
+        gateway_module.http_client = original_client
+
+
+# =========================================================================
+# Test 16: Region attribution before and after failover
+# =========================================================================
+@pytest.mark.asyncio
+async def test_region_attribution_before_and_after_failover(async_client):
+    """
+    Verifies that traffic is attributed to the real served region before and after failover:
+    - Before failover: Region A is active writer. POST order is routed to Region A.
+    - Failover: Region B promoted to active writer.
+    - After failover: POST order is routed to Region B and attributed to Region B.
+    """
+    mock_client = AsyncMock()
+    # Mock regional backend response echoing target region in X-Served-Region
+    async def mock_handler(*args, **kwargs):
+        url = str(kwargs.get("url", ""))
+        region = "region-b" if "8002" in url else "region-a"
+        return httpx.Response(
+            201,
+            json={"order_id": "ord-1", "region": region},
+            headers={"X-Served-Region": region, "X-Routed-To-Region": region},
+        )
+    mock_client.request.side_effect = mock_handler
+    original_client = gateway_module.http_client
+    gateway_module.http_client = mock_client
+
+    try:
+        # 1. Before failover: active writer is Region A
+        assert route_table.active_target == "region-a"
+        r1 = await async_client.post(
+            "/api/ecommerce/orders",
+            json={"product_id": "p1"},
+            headers={"X-Traffic-Source": "online_store"},
+        )
+        assert r1.status_code == 201
+        assert r1.headers["X-Served-Region"] == "region-a"
+        assert telemetry_collector.regions["region-a"].requests_total == 1
+        assert telemetry_collector.regions["region-b"].requests_total == 0
+
+        # 2. Simulate Failover: Promote Region B
+        route_table.set_target(target_region="region-b", target_role="ACTIVE", dns_ttl_seconds=2)
+        assert route_table.active_target == "region-b"
+
+        # 3. After failover: request must be attributed to Region B
+        r2 = await async_client.post(
+            "/api/ecommerce/orders",
+            json={"product_id": "p2"},
+            headers={"X-Traffic-Source": "online_store"},
+        )
+        assert r2.status_code == 201
+        assert r2.headers["X-Served-Region"] == "region-b"
+        assert telemetry_collector.regions["region-a"].requests_total == 1
+        assert telemetry_collector.regions["region-b"].requests_total == 1
+    finally:
+        gateway_module.http_client = original_client
+
+
+# =========================================================================
+# Test 17: Exactly-once regional accounting & no double-counting on 429
+# =========================================================================
+@pytest.mark.asyncio
+async def test_exactly_once_regional_and_429_accounting(async_client):
+    """
+    Verifies that:
+    1. A single upstream request increments the target region's counters exactly once.
+    2. A throttled HTTP 429 request is recorded exactly once across the ASGI stack.
+    """
+    traffic_coordinator.set_mode(LimiterMode.TOKEN_BUCKET)
+    traffic_coordinator.update_config(token_capacity=1.0, token_refill_rate=0.0)
+
+    mock_client = AsyncMock()
+    mock_client.request.return_value = httpx.Response(200, json={"items": []})
+    original_client = gateway_module.http_client
+    gateway_module.http_client = mock_client
+
+    try:
+        # Request 1: succeeds (consumes 1 token)
+        res1 = await async_client.get(
+            "/api/ecommerce/products",
+            headers={"X-Client-ID": "user-strict-test", "X-Traffic-Source": "online_store"},
+        )
+        assert res1.status_code == 200
+        assert telemetry_collector.regions["region-a"].requests_total == 1
+
+        # Request 2: rate limited (Token Bucket exhausted)
+        res2 = await async_client.post(
+            "/api/ecommerce/orders",
+            json={"product_id": "p1"},
+            headers={"X-Client-ID": "user-strict-test", "X-Traffic-Source": "online_store"},
+        )
+        assert res2.status_code == 429
+
+        # Telemetry verification:
+        # Rate-limited request recorded exactly once:
+        assert telemetry_collector.rate_limited_429 == 1
+        assert telemetry_collector.status_4xx == 1
+        assert telemetry_collector.total_requests == 2  # 1 successful GET + 1 throttled POST
+
+        # Upstream regional requests: must remain exactly 1 (the throttled request sent NO upstream traffic)
+        assert telemetry_collector.regions["region-a"].requests_total == 1
+    finally:
+        gateway_module.http_client = original_client

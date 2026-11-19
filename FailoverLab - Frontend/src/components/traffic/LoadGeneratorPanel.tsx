@@ -97,6 +97,7 @@ export const LoadGeneratorPanel: React.FC = () => {
       const headers: Record<string, string> = {
         'X-Client-Region': clientRegion,
         'X-Client-ID': 'load-generator-harness',
+        'X-Traffic-Source': 'load_generator',
         'X-Request-ID': `burst-${Date.now().toString(36)}-${i}-${Math.random().toString(36).substring(2, 7)}`,
       };
       if (requestType === 'order_create') {

@@ -151,13 +151,14 @@ class RegionalTrafficResponse(BaseModel):
 
 class TrafficEventModel(BaseModel):
     id: str
+    request_id: str = ""
     timestamp: str
     method: str
     endpoint: str
     client_region: str
     served_region: str
     request_type: str
-    rate_limiter_decision: str
+    rate_limiter_decision: str = "accepted"
     status_code: int
     duration_ms: float
     request_payload_bytes: int = 0

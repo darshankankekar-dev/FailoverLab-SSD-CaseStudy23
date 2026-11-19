@@ -22,6 +22,10 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      '/api/v1/traffic/recent-events': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/api/v1/traffic/stream': {
         target: 'http://localhost:8000',
         changeOrigin: true,

@@ -53,34 +53,31 @@ describe('ControllerClient Telemetry Methods', () => {
 
   it('fetchTrafficSummary returns typed summary payload', async () => {
     const mockSummary = {
-      client_ingress_bytes_per_sec: 1024.0,
-      client_egress_bytes_per_sec: 4096.0,
-      client_ingress_bytes_total: 50000,
-      client_egress_bytes_total: 200000,
-      upstream_egress_bytes_per_sec: 1024.0,
-      upstream_ingress_bytes_per_sec: 4096.0,
-      upstream_egress_bytes_total: 50000,
-      upstream_ingress_bytes_total: 200000,
-      requests_per_sec: 12.5,
-      requests_total: 350,
-      success_count: 345,
-      client_error_count: 5,
-      server_error_count: 0,
-      rate_limited_count: 0,
+      current_ingress_bytes_per_sec: 1024.0,
+      current_egress_bytes_per_sec: 4096.0,
+      cumulative_ingress_bytes: 50000,
+      cumulative_egress_bytes: 200000,
+      upstream_ingress_bytes_per_sec: 4000.0,
+      upstream_egress_bytes_per_sec: 1000.0,
+      request_rate: 12.5,
+      total_requests: 350,
       status_2xx: 345,
       status_3xx: 0,
       status_4xx: 5,
       status_5xx: 0,
-      status_429: 0,
+      rate_limited_429: 0,
       latency_p50_ms: 8.5,
       latency_p95_ms: 18.2,
       latency_p99_ms: 25.0,
       latency_avg_ms: 10.1,
-      last_telemetry_timestamp: new Date().toISOString(),
+      last_received_timestamp: new Date().toISOString(),
       telemetry_freshness: 'FRESH' as const,
-      measurement_source: 'application_payload',
-      active_gateway_instances: ['gateway-primary'],
-      dropped_batches_total: 0,
+      telemetry_age_seconds: 0.5,
+      is_available: true,
+      measurement_source: 'gateway-1',
+      measurement_unit: 'bytes',
+      measurement_type: 'application_payload_bytes',
+      note: 'Application/API payload bytes measured at Gateway proxy boundaries.',
     };
 
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -90,25 +87,31 @@ describe('ControllerClient Telemetry Methods', () => {
 
     const res = await controllerClient.fetchTrafficSummary();
     expect(res).not.toBeNull();
-    expect(res?.client_ingress_bytes_per_sec).toBe(1024.0);
+    expect(res?.current_ingress_bytes_per_sec).toBe(1024.0);
     expect(res?.telemetry_freshness).toBe('FRESH');
     expect(res?.latency_p95_ms).toBe(18.2);
+    expect(res?.total_requests).toBe(350);
   });
 
   it('fetchTrafficTimeseries returns timeseries points with custom range', async () => {
     const mockTimeseries = {
-      range_seconds: 60,
+      time_range_seconds: 60,
       step_seconds: 1,
-      points_count: 2,
+      point_count: 2,
       points: [
         {
           timestamp: '2026-11-19T02:00:00Z',
-          client_ingress_bytes_per_sec: 100,
-          client_egress_bytes_per_sec: 400,
-          upstream_egress_bytes_per_sec: 100,
-          upstream_ingress_bytes_per_sec: 400,
-          requests_per_sec: 5.0,
-          error_rate_percent: 0.0,
+          client_ingress_bytes: 5000,
+          client_egress_bytes: 20000,
+          client_ingress_rate: 100.0,
+          client_egress_rate: 400.0,
+          upstream_ingress_rate: 350.0,
+          upstream_egress_rate: 90.0,
+          request_rate: 5.0,
+          error_rate: 0.0,
+          status_2xx: 5,
+          status_4xx: 0,
+          status_5xx: 0,
           latency_p95_ms: 12.0,
         },
       ],
@@ -121,43 +124,51 @@ describe('ControllerClient Telemetry Methods', () => {
 
     const res = await controllerClient.fetchTrafficTimeseries(60, 1);
     expect(res).not.toBeNull();
-    expect(res?.points_count).toBe(2);
-    expect(res?.points[0].client_ingress_bytes_per_sec).toBe(100);
+    expect(res?.point_count).toBe(2);
+    expect(res?.points[0].client_ingress_rate).toBe(100.0);
   });
 
   it('fetchRegionalTraffic returns five regions data', async () => {
     const mockRegions = {
-      active_region: 'region-a',
-      regions: [
-        {
+      timestamp: new Date().toISOString(),
+      regions: {
+        'region-a': {
           region_id: 'region-a',
-          city: 'Mumbai',
-          role: 'ACTIVE' as const,
-          health: 'HEALTHY',
-          requests_per_sec: 10.0,
+          region_name: 'Mumbai',
+          cloud_zone: 'ap-south-1',
           requests_total: 100,
-          ingress_bytes_per_sec: 2048.0,
-          egress_bytes_per_sec: 8192.0,
-          ingress_bytes_total: 50000,
-          egress_bytes_total: 200000,
-          replication_lag_seconds: 0.0,
-          last_telemetry_timestamp: new Date().toISOString(),
+          request_rate: 10.0,
+          upstream_request_bytes: 50000,
+          upstream_response_bytes: 200000,
+          upstream_ingress_rate: 8192.0,
+          upstream_egress_rate: 2048.0,
+          status_2xx: 100,
+          status_3xx: 0,
+          status_4xx: 0,
+          status_5xx: 0,
+          failed_requests: 0,
+          timeouts: 0,
+          latency_avg_ms: 15.0,
         },
-        {
+        'region-b': {
           region_id: 'region-b',
-          city: 'Singapore',
-          role: 'STANDBY' as const,
-          health: 'HEALTHY',
-          requests_per_sec: 0.0,
+          region_name: 'Singapore',
+          cloud_zone: 'ap-southeast-1',
           requests_total: 0,
-          ingress_bytes_per_sec: 0.0,
-          egress_bytes_per_sec: 0.0,
-          ingress_bytes_total: 0,
-          egress_bytes_total: 0,
-          replication_lag_seconds: 0.05,
-          last_telemetry_timestamp: null,
+          request_rate: 0.0,
+          upstream_request_bytes: 0,
+          upstream_response_bytes: 0,
+          upstream_ingress_rate: 0.0,
+          upstream_egress_rate: 0.0,
+          status_2xx: 0,
+          status_3xx: 0,
+          status_4xx: 0,
+          status_5xx: 0,
+          failed_requests: 0,
+          timeouts: 0,
+          latency_avg_ms: 0.0,
         },
-      ],
+      },
     };
 
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -167,9 +178,9 @@ describe('ControllerClient Telemetry Methods', () => {
 
     const res = await controllerClient.fetchRegionalTraffic();
     expect(res).not.toBeNull();
-    expect(res?.regions.length).toBe(2);
-    expect(res?.regions[0].city).toBe('Mumbai');
-    expect(res?.regions[1].ingress_bytes_per_sec).toBe(0.0);
+    expect(Object.keys(res?.regions || {}).length).toBe(2);
+    expect(res?.regions['region-a'].region_name).toBe('Mumbai');
+    expect(res?.regions['region-b'].upstream_ingress_rate).toBe(0.0);
   });
 
   it('fetchTrafficEvents supports pagination and filtering', async () => {
@@ -187,11 +198,14 @@ describe('ControllerClient Telemetry Methods', () => {
           client_region: 'ap-south-1',
           served_region: 'region-a',
           status_code: 200,
-          payload_ingress_bytes: 256,
-          payload_egress_bytes: 512,
           duration_ms: 15.4,
+          request_payload_bytes: 256,
+          response_payload_bytes: 512,
           request_type: 'write',
-          traffic_source: 'customer',
+          rate_limiter_decision: 'accepted',
+          request_category: 'orders',
+          traffic_source: 'online_store',
+          is_replay: false,
         },
       ],
     };
@@ -210,6 +224,7 @@ describe('ControllerClient Telemetry Methods', () => {
     expect(res).not.toBeNull();
     expect(res?.events.length).toBe(1);
     expect(res?.events[0].method).toBe('POST');
-    expect(res?.events[0].payload_ingress_bytes).toBe(256);
+    expect(res?.events[0].request_payload_bytes).toBe(256);
+    expect(res?.events[0].response_payload_bytes).toBe(512);
   });
 });

@@ -54,6 +54,10 @@ class TrafficService:
         # Latest sample across all gateways
         self._latest_sample: Optional[Dict[str, Any]] = None
 
+        # Regional rate tracking per gateway instance
+        self._last_regional_snapshots: Dict[str, Dict[str, Any]] = {}
+        self._latest_regional_rates: Dict[str, Dict[str, float]] = {}
+
         # SSE subscriber queues
         self._sse_subscribers: List[asyncio.Queue] = []
         self._sse_lock: Optional[asyncio.Lock] = None
@@ -199,6 +203,61 @@ class TrafficService:
             out_rate = batch.client_egress_rate
             req_rate = batch.request_rate
 
+        # 3.1 Calculate regional interval rates based on consecutive cumulative counters per Gateway instance
+        gw_id = batch.gateway_instance_id
+        prev_regional = self._last_regional_snapshots.get(gw_id)
+        new_regional = batch.regional_traffic or {}
+
+        elapsed_regional = max(0.1, batch.reporting_interval_seconds)
+        if prev_batch is not None:
+            prev_ts = prev_batch.timestamp if prev_batch.timestamp.tzinfo else prev_batch.timestamp.replace(tzinfo=timezone.utc)
+            t_diff = (batch_ts - prev_ts).total_seconds()
+            if t_diff > 0.05:
+                elapsed_regional = t_diff
+
+        regional_rates: Dict[str, Dict[str, float]] = {}
+        for r_id, new_r_data in new_regional.items():
+            new_reqs = new_r_data.get("requests_total", 0)
+            new_req_bytes = new_r_data.get("request_payload_bytes", 0)    # upstream egress: Gateway -> Region
+            new_resp_bytes = new_r_data.get("response_payload_bytes", 0)  # upstream ingress: Region -> Gateway
+
+            if prev_regional and r_id in prev_regional:
+                prev_r_data = prev_regional[r_id]
+                prev_reqs = prev_r_data.get("requests_total", 0)
+                prev_req_bytes = prev_r_data.get("request_payload_bytes", 0)
+                prev_resp_bytes = prev_r_data.get("response_payload_bytes", 0)
+
+                # Check for counter reset
+                if (
+                    new_reqs < prev_reqs
+                    or new_req_bytes < prev_req_bytes
+                    or new_resp_bytes < prev_resp_bytes
+                ):
+                    delta_reqs = new_reqs
+                    delta_egress = new_req_bytes
+                    delta_ingress = new_resp_bytes
+                else:
+                    delta_reqs = max(0, new_reqs - prev_reqs)
+                    delta_egress = max(0, new_req_bytes - prev_req_bytes)
+                    delta_ingress = max(0, new_resp_bytes - prev_resp_bytes)
+
+                r_req_rate = round(float(delta_reqs) / elapsed_regional, 2)
+                r_egress_rate = round(float(delta_egress) / elapsed_regional, 2)
+                r_ingress_rate = round(float(delta_ingress) / elapsed_regional, 2)
+            else:
+                r_req_rate = 0.0
+                r_egress_rate = 0.0
+                r_ingress_rate = 0.0
+
+            regional_rates[r_id] = {
+                "request_rate": r_req_rate,
+                "upstream_egress_rate": r_egress_rate,
+                "upstream_ingress_rate": r_ingress_rate,
+            }
+
+        self._last_regional_snapshots[gw_id] = new_regional
+        self._latest_regional_rates = regional_rates
+
         # 4. Persist to Database
         entity = TrafficSampleEntity(
             batch_id=batch.batch_id,
@@ -269,7 +328,8 @@ class TrafficService:
 
         self._recent_samples.append(sample_dict)
 
-        # Ingest recent events
+        # Ingest recent events (deduplicated)
+        newly_accepted_events = []
         if batch.events:
             for ev in batch.events:
                 ev_id = ev.get("id") or ev.get("request_id")
@@ -278,10 +338,38 @@ class TrafficService:
                     if len(self._known_event_ids) > 2000:
                         self._known_event_ids.popitem(last=False)
                     self._recent_events.append(ev)
+                    newly_accepted_events.append(ev)
 
         # Broadcast SSE metrics
         summary_payload = self.get_traffic_summary().model_dump(mode="json")
         await self._broadcast_sse("traffic_metric", summary_payload)
+
+        # Broadcast each newly accepted traffic event
+        for ev in newly_accepted_events:
+            req_id = ev.get("request_id") or ev.get("id", "")
+            ev_model = TrafficEventModel(
+                id=ev.get("id") or f"evt-{req_id}",
+                request_id=req_id,
+                timestamp=ev.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                method=ev.get("method", "GET"),
+                endpoint=ev.get("endpoint", "/"),
+                client_region=ev.get("client_region", "unknown"),
+                served_region=ev.get("served_region", "unknown"),
+                request_type=ev.get("request_type", "eventual_read"),
+                rate_limiter_decision=ev.get("rate_limiter_decision", "accepted"),
+                status_code=ev.get("status_code", 200),
+                duration_ms=ev.get("duration_ms", 0.0),
+                request_payload_bytes=ev.get("request_payload_bytes", 0),
+                response_payload_bytes=ev.get("response_payload_bytes", 0),
+                request_category=ev.get("request_category", "other"),
+                upstream_region=ev.get("upstream_region"),
+                upstream_request_bytes=ev.get("upstream_request_bytes", 0),
+                upstream_response_bytes=ev.get("upstream_response_bytes", 0),
+                upstream_duration_ms=ev.get("upstream_duration_ms", 0.0),
+                traffic_source=ev.get("traffic_source", "online_store"),
+                is_replay=ev.get("is_replay", False),
+            )
+            await self._broadcast_sse("traffic_event", ev_model.model_dump(mode="json"))
 
         # 6. Periodic Retention Prune (every 100 batches)
         self._ingest_counter += 1
@@ -394,27 +482,35 @@ class TrafficService:
     ) -> TrafficTimeseriesResponse:
         """
         Retrieves timeseries points for the requested time range and step sampling.
-        Prioritizes the circular buffer for rapid responses, falling back to DB for older ranges.
+        Prioritizes the circular buffer for rapid responses, merging older persisted DB
+        samples when in-memory history does not cover the full requested time range.
         """
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(seconds=time_range_seconds)
 
-        # Check if in-memory buffer covers the requested range
-        samples = [
+        # In-memory samples covering the window
+        mem_samples = [
             s for s in self._recent_samples
             if (s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)) >= cutoff
         ]
 
-        # If in-memory buffer does not have enough points, query DB
-        if not samples:
-            stmt = (
-                select(TrafficSampleEntity)
-                .where(TrafficSampleEntity.timestamp >= cutoff)
-                .order_by(TrafficSampleEntity.timestamp.asc())
+        # Determine if we need older historical samples from the database
+        oldest_mem_ts = None
+        if mem_samples:
+            oldest_mem_ts = min(
+                s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)
+                for s in mem_samples
             )
+
+        db_samples = []
+        if oldest_mem_ts is None or oldest_mem_ts > cutoff:
+            stmt = select(TrafficSampleEntity).where(TrafficSampleEntity.timestamp >= cutoff)
+            if oldest_mem_ts is not None:
+                stmt = stmt.where(TrafficSampleEntity.timestamp < oldest_mem_ts)
+            stmt = stmt.order_by(TrafficSampleEntity.timestamp.asc())
             res = await session.execute(stmt)
             entities = res.scalars().all()
-            samples = [
+            db_samples = [
                 {
                     "timestamp": e.timestamp if e.timestamp.tzinfo else e.timestamp.replace(tzinfo=timezone.utc),
                     "client_ingress_bytes": e.client_ingress_bytes,
@@ -433,12 +529,18 @@ class TrafficService:
                 for e in entities
             ]
 
+        # Combine database history and in-memory history
+        all_samples = db_samples + mem_samples
+        all_samples.sort(
+            key=lambda s: s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)
+        )
+
         # Downsample by step_seconds if requested and points exist
         points: List[TrafficTimeseriesPoint] = []
-        if samples:
+        if all_samples:
             step = max(1, step_seconds)
-            for i, s in enumerate(samples):
-                if i % step == 0 or i == len(samples) - 1:
+            for i, s in enumerate(all_samples):
+                if i % step == 0 or i == len(all_samples) - 1:
                     ts = s["timestamp"] if s["timestamp"].tzinfo else s["timestamp"].replace(tzinfo=timezone.utc)
                     points.append(
                         TrafficTimeseriesPoint(
@@ -510,13 +612,45 @@ class TrafficService:
                     regions_map[r_id].status_5xx = r_data.get("status_5xx", 0)
                     regions_map[r_id].failed_requests = r_data.get("failed_requests", 0)
                     regions_map[r_id].timeouts = r_data.get("timeouts", 0)
-                    regions_map[r_id].latency_avg_ms = r_data.get("average_latency_ms", 0.0)
+                    regions_map[r_id].latency_avg_ms = r_data.get("average_latency_ms") or r_data.get("average_duration_ms", 0.0)
+
+                    # Populate calculated interval rates
+                    if r_id in self._latest_regional_rates:
+                        rates = self._latest_regional_rates[r_id]
+                        regions_map[r_id].request_rate = rates.get("request_rate", 0.0)
+                        regions_map[r_id].upstream_ingress_rate = rates.get("upstream_ingress_rate", 0.0)
+                        regions_map[r_id].upstream_egress_rate = rates.get("upstream_egress_rate", 0.0)
 
         return RegionalTrafficResponse(timestamp=now, regions=regions_map)
 
-    def get_traffic_events(self, page: int = 1, page_size: int = 20) -> TrafficEventsResponse:
-        """Returns paginated recent bounded traffic events."""
-        events_list = list(self._recent_events)
+    def get_traffic_events(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        traffic_source: Optional[str] = None,
+        client_region: Optional[str] = None,
+        served_region: Optional[str] = None,
+        status_code: Optional[int] = None,
+        request_type: Optional[str] = None,
+    ) -> TrafficEventsResponse:
+        """
+        Returns recent bounded traffic events (newest first) with pagination and optional filtering.
+        """
+        # Order newest first
+        events_list = list(reversed(self._recent_events))
+
+        # Filter if requested
+        if traffic_source:
+            events_list = [e for e in events_list if e.get("traffic_source") == traffic_source]
+        if client_region:
+            events_list = [e for e in events_list if e.get("client_region") == client_region]
+        if served_region:
+            events_list = [e for e in events_list if e.get("served_region") == served_region]
+        if status_code is not None:
+            events_list = [e for e in events_list if e.get("status_code") == status_code]
+        if request_type:
+            events_list = [e for e in events_list if e.get("request_type") == request_type]
+
         total = len(events_list)
         page = max(1, page)
         page_size = max(1, min(100, page_size))
@@ -527,9 +661,11 @@ class TrafficService:
 
         models: List[TrafficEventModel] = []
         for e in slice_events:
+            req_id = e.get("request_id") or e.get("id", "")
             models.append(
                 TrafficEventModel(
-                    id=e.get("id", f"evt-{e.get('request_id', 'unknown')}"),
+                    id=e.get("id") or f"evt-{req_id}",
+                    request_id=req_id,
                     timestamp=e.get("timestamp", datetime.now(timezone.utc).isoformat()),
                     method=e.get("method", "GET"),
                     endpoint=e.get("endpoint", "/"),
@@ -566,6 +702,8 @@ class TrafficService:
         self._processed_batch_ids.clear()
         self._last_batches.clear()
         self._latest_sample = None
+        self._last_regional_snapshots.clear()
+        self._latest_regional_rates.clear()
         self._ingest_counter = 0
 
 
